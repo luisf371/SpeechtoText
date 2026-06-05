@@ -37,6 +37,14 @@ def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
                 "Parakeet STT provider requires a Parakeet endpoint URL!\n\n"
                 "Enter a base URL such as http://192.168.1.234:8678.",
             )
+        if config.parakeet_streaming_enabled and (
+            config.sample_rate != 16000 or config.channels != 1
+        ):
+            return (
+                False,
+                "Parakeet WebSocket streaming requires 16 kHz mono audio!\n\n"
+                "Set Sample Rate to 16000 and Channels to 1.",
+            )
     elif config.stt_provider == "custom":
         if not config.get_custom_stt_endpoint().strip():
             return (

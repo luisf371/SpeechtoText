@@ -46,6 +46,7 @@ class APISection:
         self.custom_stt_endpoint_var = tk.StringVar()
         self.custom_refinement_endpoint_var = tk.StringVar()
         self.parakeet_endpoint_var = tk.StringVar()
+        self.parakeet_streaming_enabled_var = tk.BooleanVar()
 
         # Provider-specific widgets
         self.openai_widgets = {}
@@ -356,6 +357,12 @@ class APISection:
             font=("TkDefaultFont", 8),
             foreground="gray",
         ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
+        ttk.Checkbutton(
+            self.parakeet_endpoint_frame,
+            text="Use WebSocket streaming",
+            variable=self.parakeet_streaming_enabled_var,
+            command=lambda: self.on_change() if self.on_change else None,
+        ).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(2, 0))
 
         # Custom STT API Endpoint
         self.custom_stt_endpoint_frame = ttk.Frame(self.frame)
@@ -639,6 +646,7 @@ class APISection:
             "custom_stt_endpoint": self.custom_stt_endpoint_var.get().strip(),
             "custom_refinement_endpoint": self.custom_refinement_endpoint_var.get().strip(),
             "parakeet_endpoint": self.parakeet_endpoint_var.get().strip(),
+            "parakeet_streaming_enabled": self.parakeet_streaming_enabled_var.get(),
         }
 
     def set_values(
@@ -656,6 +664,7 @@ class APISection:
         custom_stt_endpoint: str = "",
         custom_refinement_endpoint: str = "",
         parakeet_endpoint: str = "http://localhost:8000",
+        parakeet_streaming_enabled: bool = False,
     ):
         """
         Set the API configuration values.
@@ -678,6 +687,7 @@ class APISection:
             custom_stt_endpoint: Custom STT API endpoint URL
             custom_refinement_endpoint: Custom refinement API endpoint URL
             parakeet_endpoint: Parakeet FastAPI service URL
+            parakeet_streaming_enabled: Use Parakeet WebSocket streaming
         """
         # Set API keys
         self.openai_api_key_var.set(openai_api_key)
@@ -691,6 +701,7 @@ class APISection:
             custom_refinement_endpoint or custom_endpoint
         )
         self.parakeet_endpoint_var.set(parakeet_endpoint or "http://localhost:8000")
+        self.parakeet_streaming_enabled_var.set(parakeet_streaming_enabled)
 
         # Store provider-specific models BEFORE setting providers
         # This ensures the update methods will use these values
@@ -926,6 +937,9 @@ class APISection:
         status_lines.append(f"  STT Model: {values['stt_model']}")
         if values["stt_provider"] == "parakeet":
             status_lines.append(f"  Parakeet Endpoint: {values['parakeet_endpoint']}")
+            status_lines.append(
+                f"  Parakeet Streaming: {'Enabled' if values['parakeet_streaming_enabled'] else 'Disabled'}"
+            )
         status_lines.append(f"  Refinement Provider: {values['refinement_provider']}")
         status_lines.append(f"  Refinement Model: {values['refinement_model']}")
 

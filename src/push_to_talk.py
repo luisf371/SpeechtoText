@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator, ConfigD
 from src.audio_recorder import AudioRecorder
 from src.transcriber_factory import TranscriberFactory
 from src.transcription_base import TranscriberBase
+from src.transcription_parakeet_streaming import (
+    PARAKEET_STREAMING_CHANNELS,
+    PARAKEET_STREAMING_FRAME_BYTES,
+    PARAKEET_STREAMING_SAMPLE_RATE,
+    ParakeetStreamingSession,
+    build_parakeet_ws_url,
+)
 from src.text_refiner_base import TextRefinerBase
 from src.text_refiner_factory import TextRefinerFactory
 from src.text_inserter import TextInserter
@@ -73,6 +80,10 @@ class PushToTalkConfig(BaseModel):
     parakeet_endpoint: str = Field(
         default="http://localhost:8000",
         description="Parakeet FastAPI service base URL or /transcribe URL",
+    )
+    parakeet_streaming_enabled: bool = Field(
+        default=False,
+        description="Use Parakeet WebSocket streaming instead of REST transcription",
     )
     custom_refinement_endpoint: str = Field(
         default="",
@@ -147,6 +158,14 @@ class PushToTalkConfig(BaseModel):
     def get_custom_refinement_endpoint(self) -> str:
         """Get custom refinement endpoint, falling back to legacy custom_endpoint."""
         return self.custom_refinement_endpoint or self.custom_endpoint
+
+    def is_parakeet_streaming_active(self) -> bool:
+        """Return True when Parakeet WebSocket streaming should be used."""
+        return self.stt_provider == "parakeet" and self.parakeet_streaming_enabled
+
+    def is_text_refinement_effective(self) -> bool:
+        """Return True when text refinement can run for the active STT mode."""
+        return self.enable_text_refinement and not self.is_parakeet_streaming_active()
 
     def save_to_file(self, filepath: str):
         """Save configuration to JSON file."""
@@ -255,6 +274,8 @@ class PushToTalkApp:
                 raise ConfigurationError(
                     "Parakeet STT provider requires a Parakeet endpoint URL."
                 )
+            if self.config.parakeet_streaming_enabled:
+                self._validate_parakeet_streaming_audio_settings()
         elif self.config.stt_provider == "custom":
             if not self.config.get_custom_stt_endpoint():
                 raise ConfigurationError(
@@ -291,6 +312,11 @@ class PushToTalkApp:
         # Track background processing threads (one per recording)
         self.processing_threads = []
         self.processing_threads_lock = threading.Lock()
+        self.streaming_session: Optional[ParakeetStreamingSession] = None
+        self.streaming_insert_queue: queue.Queue[str | None] = queue.Queue()
+        self.streaming_insert_thread: Optional[threading.Thread] = None
+        self.streaming_insert_lock = threading.Lock()
+        self.streaming_frame_buffer = bytearray()
 
         # Initialize all components (only creates components that are None)
         self._initialize_components()
@@ -390,6 +416,17 @@ class PushToTalkApp:
             channels=self.config.channels,
         )
 
+    def _validate_parakeet_streaming_audio_settings(self):
+        """Validate audio settings required by Parakeet WebSocket streaming."""
+        if (
+            self.config.sample_rate != PARAKEET_STREAMING_SAMPLE_RATE
+            or self.config.channels != PARAKEET_STREAMING_CHANNELS
+        ):
+            raise ConfigurationError(
+                "Parakeet WebSocket streaming requires 16 kHz mono audio "
+                "(sample_rate=16000, channels=1)."
+            )
+
     def _create_default_transcriber(self) -> TranscriberBase:
         """Create default TranscriberBase instance from configuration."""
         # Get the appropriate API key based on provider
@@ -435,7 +472,7 @@ class PushToTalkApp:
 
     def _create_default_text_refiner(self) -> Optional[TextRefinerBase]:
         """Create default TextRefiner instance from configuration."""
-        if self.config.enable_text_refinement:
+        if self.config.is_text_refinement_effective():
             # Get the appropriate API key based on provider
             if self.config.refinement_provider == "openai":
                 api_key = self.config.openai_api_key or None
@@ -587,6 +624,9 @@ class PushToTalkApp:
         with self.processing_threads_lock:
             self.processing_threads.clear()
 
+        self._close_streaming_session()
+        self._stop_streaming_insert_worker()
+
         if self.audio_recorder:
             self.audio_recorder.shutdown()
 
@@ -651,6 +691,11 @@ class PushToTalkApp:
         if self.config.enable_audio_feedback:
             play_start_feedback()
 
+        if self.config.is_parakeet_streaming_active():
+            if not self._start_parakeet_streaming_recording():
+                logger.error("Failed to start Parakeet streaming recording")
+            return
+
         if not self.audio_recorder.start_recording():
             logger.error("Failed to start audio recording")
 
@@ -659,6 +704,10 @@ class PushToTalkApp:
         # Play audio feedback immediately when hotkey is released
         if self.config.enable_audio_feedback:
             play_stop_feedback()
+
+        if self.config.is_parakeet_streaming_active():
+            self._stop_parakeet_streaming_recording()
+            return
 
         # Stop recording and get audio file (fast operation)
         audio_file = self.audio_recorder.stop_recording()
@@ -686,6 +735,151 @@ class PushToTalkApp:
         processing_thread.start()
 
         logger.info("Recording stopped, processing in background")
+
+    def _start_parakeet_streaming_recording(self) -> bool:
+        """Start recording and stream live PCM frames to Parakeet."""
+        try:
+            self._validate_parakeet_streaming_audio_settings()
+            self._ensure_streaming_insert_worker()
+            self.streaming_frame_buffer.clear()
+            self._ensure_streaming_session()
+
+            started = self.audio_recorder.start_recording(
+                chunk_callback=self._on_streaming_audio_chunk,
+                store_audio_data=self.config.debug_mode,
+            )
+            if not started:
+                self._close_streaming_session()
+                return False
+
+            logger.info("Parakeet WebSocket streaming recording started")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start Parakeet streaming recording: {e}")
+            self._close_streaming_session()
+            return False
+
+    def _stop_parakeet_streaming_recording(self):
+        """Stop live Parakeet streaming and skip REST transcription/refinement."""
+        audio_file = self.audio_recorder.stop_recording()
+
+        self._flush_streaming_frame_buffer()
+        self._finish_streaming_recording()
+
+        if self.config.debug_mode and audio_file:
+            self._save_debug_audio(audio_file)
+            try:
+                if os.path.exists(audio_file):
+                    os.unlink(audio_file)
+            except Exception as cleanup_error:
+                logger.warning(f"Error cleaning up streaming debug audio: {cleanup_error}")
+
+        logger.info("Parakeet WebSocket streaming recording stopped")
+
+    def _on_streaming_audio_chunk(self, chunk: bytes):
+        """Buffer recorder chunks into 512-sample frames for upstream VAD."""
+        if not self.streaming_session:
+            return
+
+        self.streaming_frame_buffer.extend(chunk)
+        while len(self.streaming_frame_buffer) >= PARAKEET_STREAMING_FRAME_BYTES:
+            frame = bytes(self.streaming_frame_buffer[:PARAKEET_STREAMING_FRAME_BYTES])
+            del self.streaming_frame_buffer[:PARAKEET_STREAMING_FRAME_BYTES]
+            self.streaming_session.send_audio(frame)
+
+    def _flush_streaming_frame_buffer(self):
+        """Send the final partial PCM frame padded to the expected frame size."""
+        if not self.streaming_session or not self.streaming_frame_buffer:
+            self.streaming_frame_buffer.clear()
+            return
+
+        padding = PARAKEET_STREAMING_FRAME_BYTES - len(self.streaming_frame_buffer)
+        frame = bytes(self.streaming_frame_buffer) + (b"\x00" * padding)
+        self.streaming_frame_buffer.clear()
+        self.streaming_session.send_audio(frame)
+
+    def _ensure_streaming_session(self):
+        """Create or restart the long-lived Parakeet streaming session."""
+        ws_url = build_parakeet_ws_url(self.config.parakeet_endpoint)
+        if (
+            self.streaming_session
+            and self.streaming_session.ws_url == ws_url
+            and not self.streaming_session.error
+        ):
+            self.streaming_session.start()
+            return
+
+        self._close_streaming_session()
+        self.streaming_session = ParakeetStreamingSession(
+            self.config.parakeet_endpoint,
+            on_text=self._enqueue_streaming_text,
+        )
+        self.streaming_session.start()
+
+    def _finish_streaming_recording(self):
+        """Flush the current recording without closing the long-lived socket."""
+        session = self.streaming_session
+        if not session:
+            return
+
+        threading.Thread(
+            target=session.finish_recording,
+            daemon=True,
+            name="ParakeetStreamingDrain",
+        ).start()
+
+    def _close_streaming_session(self):
+        """Close the active streaming session if one exists."""
+        session = self.streaming_session
+        self.streaming_session = None
+        if session:
+            session.stop()
+
+    def _ensure_streaming_insert_worker(self):
+        """Start the single-consumer insert worker for streaming text segments."""
+        if self.streaming_insert_thread and self.streaming_insert_thread.is_alive():
+            return
+
+        self.streaming_insert_thread = threading.Thread(
+            target=self._streaming_insert_loop,
+            daemon=True,
+            name="StreamingTextInsert",
+        )
+        self.streaming_insert_thread.start()
+
+    def _stop_streaming_insert_worker(self):
+        """Stop the streaming insert worker during app shutdown."""
+        if self.streaming_insert_thread and self.streaming_insert_thread.is_alive():
+            self.streaming_insert_queue.put(None)
+            self.streaming_insert_thread.join(timeout=2.0)
+        self.streaming_insert_thread = None
+
+    def _enqueue_streaming_text(self, text: str):
+        """Queue a finalized streaming segment for ordered insertion."""
+        text = text.strip()
+        if text:
+            self.streaming_insert_queue.put(text)
+
+    def _streaming_insert_loop(self):
+        """Insert streaming text segments serially to avoid clipboard races."""
+        while True:
+            text = self.streaming_insert_queue.get()
+            if text is None:
+                self.streaming_insert_queue.task_done()
+                break
+
+            try:
+                with self.streaming_insert_lock:
+                    segment = text if text.endswith((" ", "\n")) else f"{text} "
+                    success = self.text_inserter.insert_text(segment)
+                if success:
+                    logger.info("Streaming text insertion successful")
+                else:
+                    logger.error("Streaming text insertion failed")
+            except TextInsertionError as e:
+                logger.error(f"Streaming text insertion failed: {e}")
+            finally:
+                self.streaming_insert_queue.task_done()
 
     def _process_audio_background(self, audio_file: str):
         """Process audio in background thread (transcribe, refine, insert).
@@ -732,7 +926,7 @@ class PushToTalkApp:
 
             # Refine text if enabled (1-2 seconds, runs in background)
             final_text = transcribed_text
-            if self.text_refiner and self.config.enable_text_refinement:
+            if self.text_refiner and self.config.is_text_refinement_effective():
                 logger.info("Refining transcribed text...")
                 try:
                     refined_text = self.text_refiner.refine_text(transcribed_text)
@@ -883,7 +1077,7 @@ class PushToTalkApp:
 
         # Reinitialize text refiner if needed
         if old_value != self.config.enable_text_refinement:
-            if self.config.enable_text_refinement:
+            if self.config.is_text_refinement_effective():
                 # Get the appropriate API key based on provider
                 if self.config.refinement_provider == "openai":
                     api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -919,7 +1113,7 @@ class PushToTalkApp:
                 self.transcriber.set_glossary(self.config.custom_glossary)
 
         logger.info(
-            f"Text refinement {'enabled' if self.config.enable_text_refinement else 'disabled'}"
+            f"Text refinement {'enabled' if self.config.is_text_refinement_effective() else 'disabled'}"
         )
         return self.config.enable_text_refinement
 
@@ -959,6 +1153,7 @@ class PushToTalkApp:
             "toggle_hotkey": self.config.toggle_hotkey,
             "recording_mode": recording_mode,
             "audio_feedback_enabled": self.config.enable_audio_feedback,
-            "text_refinement_enabled": self.config.enable_text_refinement,
+            "text_refinement_enabled": self.config.is_text_refinement_effective(),
+            "parakeet_streaming_enabled": self.config.is_parakeet_streaming_active(),
             "logging_enabled": self.config.enable_logging,
         }

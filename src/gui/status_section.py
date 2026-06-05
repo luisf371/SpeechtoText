@@ -105,9 +105,14 @@ class StatusSection:
             font=("TkDefaultFont", 9, "bold"),
         ).pack(anchor="w")
 
+        stt_mode = config.stt_provider
+        if config.is_parakeet_streaming_active():
+            stt_mode = "parakeet WebSocket"
+
         settings_text = f"""• Push-to-Talk: {config.hotkey}
 • Toggle Recording: {config.toggle_hotkey}
-• Text Refinement: {"Enabled" if config.enable_text_refinement else "Disabled"}
+• STT Mode: {stt_mode}
+• Text Refinement: {"Enabled" if config.is_text_refinement_effective() else "Disabled"}
 • Audio Feedback: {"Enabled" if config.enable_audio_feedback else "Disabled"}"""
 
         ttk.Label(

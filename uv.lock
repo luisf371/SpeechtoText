@@ -546,6 +546,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pynput" },
     { name = "pyperclip" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -571,6 +572,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pynput", specifier = ">=1.7.7" },
     { name = "pyperclip", specifier = ">=1.9.0" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [package.metadata.requires-dev]

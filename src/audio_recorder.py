@@ -2,11 +2,10 @@ import pyaudio
 import wave
 import threading
 import tempfile
-from typing import Optional
+from typing import Callable, Optional
 from loguru import logger
 
 from src.config.constants import AUDIO_RECORDING_THREAD_TIMEOUT_SECONDS
-from src.exceptions import AudioRecordingError
 
 
 class AudioRecorder:
@@ -34,6 +33,8 @@ class AudioRecorder:
         self.is_recording = False
         self.audio_data = []
         self.recording_thread: Optional[threading.Thread] = None
+        self.chunk_callback: Callable[[bytes], None] | None = None
+        self.store_audio_data = True
 
         self.audio_interface = None
         self.stream = None
@@ -52,7 +53,11 @@ class AudioRecorder:
             self._init_error = e
             logger.error(f"Failed to initialize PyAudio: {e}")
 
-    def start_recording(self) -> bool:
+    def start_recording(
+        self,
+        chunk_callback: Callable[[bytes], None] | None = None,
+        store_audio_data: bool = True,
+    ) -> bool:
         """Start recording audio."""
         if self.is_recording:
             logger.warning("Recording is already in progress")
@@ -83,6 +88,8 @@ class AudioRecorder:
 
             self.is_recording = True
             self.audio_data = []
+            self.chunk_callback = chunk_callback
+            self.store_audio_data = store_audio_data
 
             self.recording_thread = threading.Thread(target=self._record_audio)
             self.recording_thread.start()
@@ -92,6 +99,8 @@ class AudioRecorder:
 
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
+            self.chunk_callback = None
+            self.store_audio_data = True
             self._cleanup_stream()
             return False
 
@@ -111,6 +120,9 @@ class AudioRecorder:
         # Wait for recording thread to finish
         if self.recording_thread:
             self.recording_thread.join(timeout=AUDIO_RECORDING_THREAD_TIMEOUT_SECONDS)
+
+        self.chunk_callback = None
+        self.store_audio_data = True
 
         # Get sample width before cleanup
         sample_width = None
@@ -164,7 +176,16 @@ class AudioRecorder:
             while self.is_recording and self.stream:
                 data = self.stream.read(self.chunk_size, exception_on_overflow=False)
                 if isinstance(data, (bytes, bytearray)):
-                    self.audio_data.append(data)
+                    chunk = bytes(data)
+                    if self.store_audio_data:
+                        self.audio_data.append(chunk)
+                    if self.chunk_callback:
+                        try:
+                            self.chunk_callback(chunk)
+                        except Exception as callback_error:
+                            logger.error(
+                                f"Audio chunk callback failed: {callback_error}"
+                            )
                 else:  # pragma: no cover - defensive guard for mocked objects
                     logger.debug(
                         "Skipping non-bytes audio chunk during recording: %s",

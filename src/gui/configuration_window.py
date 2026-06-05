@@ -244,6 +244,7 @@ Configure your settings below, then click "Start Application" to begin:"""
                         self.api_section.custom_stt_endpoint_var,
                         self.api_section.custom_refinement_endpoint_var,
                         self.api_section.parakeet_endpoint_var,
+                        self.api_section.parakeet_streaming_enabled_var,
                     ]
                 )
             if self.hotkey_section:
@@ -276,6 +277,8 @@ Configure your settings below, then click "Start Application" to begin:"""
 
         Implements debouncing to prevent excessive updates during rapid user input.
         """
+        self._update_effective_control_state()
+
         if self._suspend_change_events:
             return
 
@@ -352,6 +355,7 @@ Configure your settings below, then click "Start Application" to begin:"""
             custom_stt_endpoint=api_values["custom_stt_endpoint"],
             custom_refinement_endpoint=api_values["custom_refinement_endpoint"],
             parakeet_endpoint=api_values["parakeet_endpoint"],
+            parakeet_streaming_enabled=api_values["parakeet_streaming_enabled"],
             hotkey=hotkey_values["hotkey"],
             toggle_hotkey=hotkey_values["toggle_hotkey"],
             enable_text_refinement=feature_values["enable_text_refinement"],
@@ -380,6 +384,7 @@ Configure your settings below, then click "Start Application" to begin:"""
                 config.custom_stt_endpoint,
                 config.custom_refinement_endpoint,
                 config.parakeet_endpoint,
+                config.parakeet_streaming_enabled,
             )
             self.hotkey_section.set_values(config.hotkey, config.toggle_hotkey)
             self.feature_flags_section.set_values(
@@ -390,8 +395,22 @@ Configure your settings below, then click "Start Application" to begin:"""
             )
             self.glossary_section.set_terms(config.custom_glossary)
             self.prompt_section.set_prompt(config.custom_refinement_prompt)
+            self._update_effective_control_state()
         finally:
             self._suspend_change_events = False
+
+    def _update_effective_control_state(self):
+        """Update controls whose availability depends on selected provider mode."""
+        if not self.api_section or not self.feature_flags_section:
+            return
+
+        streaming_active = (
+            self.api_section.stt_provider_var.get() == "parakeet"
+            and self.api_section.parakeet_streaming_enabled_var.get()
+        )
+        self.feature_flags_section.set_text_refinement_available(
+            not streaming_active
+        )
 
     def _test_configuration(self):
         """Test all provider API keys and show comprehensive status."""

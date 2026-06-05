@@ -22,17 +22,19 @@ class FeatureFlagsSection:
         self.enable_logging_var = tk.BooleanVar()
         self.enable_audio_feedback_var = tk.BooleanVar()
         self.debug_mode_var = tk.BooleanVar()
+        self.text_refinement_checkbox = None
 
         self._create_widgets()
 
     def _create_widgets(self):
         """Create the feature flags section widgets."""
         # Text Refinement
-        ttk.Checkbutton(
+        self.text_refinement_checkbox = ttk.Checkbutton(
             self.frame,
             text="Enable Text Refinement (additional processing for better text quality)",
             variable=self.enable_text_refinement_var,
-        ).grid(row=0, column=0, sticky="w", pady=2)
+        )
+        self.text_refinement_checkbox.grid(row=0, column=0, sticky="w", pady=2)
 
         # Logging
         ttk.Checkbutton(
@@ -89,3 +91,10 @@ class FeatureFlagsSection:
         self.enable_logging_var.set(enable_logging)
         self.enable_audio_feedback_var.set(enable_audio_feedback)
         self.debug_mode_var.set(debug_mode)
+
+    def set_text_refinement_available(self, available: bool):
+        """Enable or disable the refinement checkbox without changing its value."""
+        if self.text_refinement_checkbox:
+            self.text_refinement_checkbox.configure(
+                state="normal" if available else "disabled"
+            )

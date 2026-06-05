@@ -18,3 +18,5 @@ Append-only lessons learned log. Newest notes go at the bottom. Keep entries bri
 ## 2026-06-05
 
 - Shadowfita Parakeet FastAPI should be called through native `POST /transcribe` with multipart field `file`; send `should_chunk=false` for short PushToTalk clips to avoid the upstream chunker unpacking bug seen at `/audio/transcriptions`.
+- Parakeet WebSocket streaming uses `ws://.../ws` with raw 16 kHz mono int16 PCM frames; runtime refinement is disabled for streaming without mutating the saved `enable_text_refinement` preference.
+- Keep the Parakeet WebSocket open across recordings; upstream `stream_routes.py` has an infinite consumer that can log ASGI `websocket.send` after client close if a per-recording socket is closed before late results.
