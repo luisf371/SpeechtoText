@@ -47,6 +47,10 @@ class APISection:
         self.custom_refinement_endpoint_var = tk.StringVar()
         self.parakeet_endpoint_var = tk.StringVar()
         self.parakeet_streaming_enabled_var = tk.BooleanVar()
+        self.parakeet_streaming_vad_end_silence_ms_var = tk.StringVar()
+        self.parakeet_streaming_max_chunk_seconds_var = tk.StringVar()
+        self.parakeet_streaming_batch_size_var = tk.StringVar()
+        self.parakeet_streaming_batch_window_ms_var = tk.StringVar()
 
         # Provider-specific widgets
         self.openai_widgets = {}
@@ -363,6 +367,38 @@ class APISection:
             variable=self.parakeet_streaming_enabled_var,
             command=lambda: self.on_change() if self.on_change else None,
         ).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(2, 0))
+        ttk.Label(self.parakeet_endpoint_frame, text="VAD End Silence (ms):").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            self.parakeet_endpoint_frame,
+            textvariable=self.parakeet_streaming_vad_end_silence_ms_var,
+            width=8,
+        ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=2)
+        ttk.Label(self.parakeet_endpoint_frame, text="Max Chunk (s):").grid(
+            row=4, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            self.parakeet_endpoint_frame,
+            textvariable=self.parakeet_streaming_max_chunk_seconds_var,
+            width=8,
+        ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=2)
+        ttk.Label(self.parakeet_endpoint_frame, text="Batch Size:").grid(
+            row=5, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            self.parakeet_endpoint_frame,
+            textvariable=self.parakeet_streaming_batch_size_var,
+            width=8,
+        ).grid(row=5, column=1, sticky="w", padx=(10, 0), pady=2)
+        ttk.Label(self.parakeet_endpoint_frame, text="Batch Window (ms):").grid(
+            row=6, column=0, sticky="w", pady=2
+        )
+        ttk.Entry(
+            self.parakeet_endpoint_frame,
+            textvariable=self.parakeet_streaming_batch_window_ms_var,
+            width=8,
+        ).grid(row=6, column=1, sticky="w", padx=(10, 0), pady=2)
 
         # Custom STT API Endpoint
         self.custom_stt_endpoint_frame = ttk.Frame(self.frame)
@@ -647,6 +683,10 @@ class APISection:
             "custom_refinement_endpoint": self.custom_refinement_endpoint_var.get().strip(),
             "parakeet_endpoint": self.parakeet_endpoint_var.get().strip(),
             "parakeet_streaming_enabled": self.parakeet_streaming_enabled_var.get(),
+            "parakeet_streaming_vad_end_silence_ms": self.parakeet_streaming_vad_end_silence_ms_var.get().strip(),
+            "parakeet_streaming_max_chunk_seconds": self.parakeet_streaming_max_chunk_seconds_var.get().strip(),
+            "parakeet_streaming_batch_size": self.parakeet_streaming_batch_size_var.get().strip(),
+            "parakeet_streaming_batch_window_ms": self.parakeet_streaming_batch_window_ms_var.get().strip(),
         }
 
     def set_values(
@@ -665,6 +705,10 @@ class APISection:
         custom_refinement_endpoint: str = "",
         parakeet_endpoint: str = "http://localhost:8000",
         parakeet_streaming_enabled: bool = False,
+        parakeet_streaming_vad_end_silence_ms: int = 250,
+        parakeet_streaming_max_chunk_seconds: float = 8.0,
+        parakeet_streaming_batch_size: int = 4,
+        parakeet_streaming_batch_window_ms: int = 15,
     ):
         """
         Set the API configuration values.
@@ -688,6 +732,10 @@ class APISection:
             custom_refinement_endpoint: Custom refinement API endpoint URL
             parakeet_endpoint: Parakeet FastAPI service URL
             parakeet_streaming_enabled: Use Parakeet WebSocket streaming
+            parakeet_streaming_vad_end_silence_ms: VAD trailing silence threshold
+            parakeet_streaming_max_chunk_seconds: VAD maximum chunk duration
+            parakeet_streaming_batch_size: Transcription micro-batch size
+            parakeet_streaming_batch_window_ms: Transcription micro-batch gather window
         """
         # Set API keys
         self.openai_api_key_var.set(openai_api_key)
@@ -702,6 +750,18 @@ class APISection:
         )
         self.parakeet_endpoint_var.set(parakeet_endpoint or "http://localhost:8000")
         self.parakeet_streaming_enabled_var.set(parakeet_streaming_enabled)
+        self.parakeet_streaming_vad_end_silence_ms_var.set(
+            str(parakeet_streaming_vad_end_silence_ms)
+        )
+        self.parakeet_streaming_max_chunk_seconds_var.set(
+            str(parakeet_streaming_max_chunk_seconds)
+        )
+        self.parakeet_streaming_batch_size_var.set(
+            str(parakeet_streaming_batch_size)
+        )
+        self.parakeet_streaming_batch_window_ms_var.set(
+            str(parakeet_streaming_batch_window_ms)
+        )
 
         # Store provider-specific models BEFORE setting providers
         # This ensures the update methods will use these values
@@ -939,6 +999,21 @@ class APISection:
             status_lines.append(f"  Parakeet Endpoint: {values['parakeet_endpoint']}")
             status_lines.append(
                 f"  Parakeet Streaming: {'Enabled' if values['parakeet_streaming_enabled'] else 'Disabled'}"
+            )
+            status_lines.append(
+                "  VAD End Silence: "
+                f"{values['parakeet_streaming_vad_end_silence_ms']} ms"
+            )
+            status_lines.append(
+                "  Max Chunk: "
+                f"{values['parakeet_streaming_max_chunk_seconds']} s"
+            )
+            status_lines.append(
+                f"  Batch Size: {values['parakeet_streaming_batch_size']}"
+            )
+            status_lines.append(
+                "  Batch Window: "
+                f"{values['parakeet_streaming_batch_window_ms']} ms"
             )
         status_lines.append(f"  Refinement Provider: {values['refinement_provider']}")
         status_lines.append(f"  Refinement Model: {values['refinement_model']}")

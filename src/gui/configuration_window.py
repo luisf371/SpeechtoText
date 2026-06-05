@@ -245,6 +245,10 @@ Configure your settings below, then click "Start Application" to begin:"""
                         self.api_section.custom_refinement_endpoint_var,
                         self.api_section.parakeet_endpoint_var,
                         self.api_section.parakeet_streaming_enabled_var,
+                        self.api_section.parakeet_streaming_vad_end_silence_ms_var,
+                        self.api_section.parakeet_streaming_max_chunk_seconds_var,
+                        self.api_section.parakeet_streaming_batch_size_var,
+                        self.api_section.parakeet_streaming_batch_window_ms_var,
                     ]
                 )
             if self.hotkey_section:
@@ -356,6 +360,18 @@ Configure your settings below, then click "Start Application" to begin:"""
             custom_refinement_endpoint=api_values["custom_refinement_endpoint"],
             parakeet_endpoint=api_values["parakeet_endpoint"],
             parakeet_streaming_enabled=api_values["parakeet_streaming_enabled"],
+            parakeet_streaming_vad_end_silence_ms=api_values[
+                "parakeet_streaming_vad_end_silence_ms"
+            ],
+            parakeet_streaming_max_chunk_seconds=api_values[
+                "parakeet_streaming_max_chunk_seconds"
+            ],
+            parakeet_streaming_batch_size=api_values[
+                "parakeet_streaming_batch_size"
+            ],
+            parakeet_streaming_batch_window_ms=api_values[
+                "parakeet_streaming_batch_window_ms"
+            ],
             hotkey=hotkey_values["hotkey"],
             toggle_hotkey=hotkey_values["toggle_hotkey"],
             enable_text_refinement=feature_values["enable_text_refinement"],
@@ -385,6 +401,10 @@ Configure your settings below, then click "Start Application" to begin:"""
                 config.custom_refinement_endpoint,
                 config.parakeet_endpoint,
                 config.parakeet_streaming_enabled,
+                config.parakeet_streaming_vad_end_silence_ms,
+                config.parakeet_streaming_max_chunk_seconds,
+                config.parakeet_streaming_batch_size,
+                config.parakeet_streaming_batch_window_ms,
             )
             self.hotkey_section.set_values(config.hotkey, config.toggle_hotkey)
             self.feature_flags_section.set_values(

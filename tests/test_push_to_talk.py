@@ -300,6 +300,126 @@ def test_start_and_stop_application(make_app, dependency_stubs):
     assert hotkey_service.stop_service_calls == 1
 
 
+def test_parakeet_streaming_uses_native_frame_chunk_size(make_app, dependency_stubs):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        chunk_size=2048,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+
+    make_app(config)
+
+    recorder = dependency_stubs.last("audio_recorder")
+    assert recorder.chunk_size == push_to_talk.PARAKEET_STREAMING_FRAME_SAMPLES
+
+
+def test_parakeet_streaming_options_are_added_to_ws_url():
+    ws_url = push_to_talk.build_parakeet_ws_url(
+        "http://localhost:8000/transcribe?existing=true",
+        vad_end_silence_ms=200,
+        vad_max_chunk_seconds=3.0,
+        transcription_batch_size=1,
+        transcription_batch_window_ms=0,
+    )
+
+    assert ws_url == (
+        "ws://localhost:8000/ws?existing=true&vad_end_silence_ms=200&"
+        "vad_max_chunk_seconds=3.0&transcription_batch_size=1&"
+        "transcription_batch_window_ms=0"
+    )
+
+
+def test_start_prewarms_parakeet_streaming_session(
+    make_app, dependency_stubs, monkeypatch
+):
+    class StubStreamingSession:
+        instances = []
+
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.on_text = on_text
+            self.kwargs = kwargs
+            self.error = None
+            self.is_active = True
+            self.start_calls = 0
+            self.stop_calls = 0
+            self.instances.append(self)
+
+        def start(self):
+            self.start_calls += 1
+
+        def stop(self):
+            self.stop_calls += 1
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+
+    app.start(setup_signals=False)
+
+    hotkey_service = dependency_stubs.last("hotkey_service")
+    assert hotkey_service.start_calls == 1
+    assert len(StubStreamingSession.instances) == 1
+    assert StubStreamingSession.instances[0].start_calls == 1
+    assert StubStreamingSession.instances[0].kwargs == {
+        "vad_end_silence_ms": push_to_talk.PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
+        "vad_max_chunk_seconds": push_to_talk.PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
+        "transcription_batch_size": push_to_talk.PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+        "transcription_batch_window_ms": push_to_talk.PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
+    }
+
+    app.stop()
+
+
+def test_inactive_parakeet_streaming_session_is_recreated(make_app, monkeypatch):
+    class StubStreamingSession:
+        instances = []
+
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.on_text = on_text
+            self.kwargs = kwargs
+            self.error = None
+            self.is_active = True
+            self.start_calls = 0
+            self.stop_calls = 0
+            self.instances.append(self)
+
+        def start(self):
+            self.start_calls += 1
+
+        def stop(self):
+            self.stop_calls += 1
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+    old_session = StubStreamingSession(config.parakeet_endpoint, app._enqueue_streaming_text)
+    old_session.is_active = False
+    app.streaming_session = old_session
+
+    app._ensure_streaming_session()
+
+    assert old_session.stop_calls == 1
+    assert app.streaming_session is StubStreamingSession.instances[-1]
+    assert app.streaming_session is not old_session
+    assert app.streaming_session.start_calls == 1
+
+
 def test_process_recorded_audio_pipeline(
     make_app,
     dependency_stubs,

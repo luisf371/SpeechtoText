@@ -15,7 +15,12 @@ from src.transcriber_factory import TranscriberFactory
 from src.transcription_base import TranscriberBase
 from src.transcription_parakeet_streaming import (
     PARAKEET_STREAMING_CHANNELS,
+    PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+    PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
     PARAKEET_STREAMING_FRAME_BYTES,
+    PARAKEET_STREAMING_FRAME_SAMPLES,
     PARAKEET_STREAMING_SAMPLE_RATE,
     ParakeetStreamingSession,
     build_parakeet_ws_url,
@@ -84,6 +89,26 @@ class PushToTalkConfig(BaseModel):
     parakeet_streaming_enabled: bool = Field(
         default=False,
         description="Use Parakeet WebSocket streaming instead of REST transcription",
+    )
+    parakeet_streaming_vad_end_silence_ms: int = Field(
+        default=PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
+        gt=0,
+        description="Parakeet WebSocket VAD trailing silence threshold in milliseconds",
+    )
+    parakeet_streaming_max_chunk_seconds: float = Field(
+        default=PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
+        gt=0,
+        description="Parakeet WebSocket maximum VAD chunk duration in seconds",
+    )
+    parakeet_streaming_batch_size: int = Field(
+        default=PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+        gt=0,
+        description="Parakeet WebSocket transcription micro-batch size",
+    )
+    parakeet_streaming_batch_window_ms: int = Field(
+        default=PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
+        ge=0,
+        description="Parakeet WebSocket transcription micro-batch gather window in milliseconds",
     )
     custom_refinement_endpoint: str = Field(
         default="",
@@ -410,9 +435,14 @@ class PushToTalkApp:
 
     def _create_default_audio_recorder(self) -> AudioRecorder:
         """Create default AudioRecorder instance from configuration."""
+        chunk_size = (
+            PARAKEET_STREAMING_FRAME_SAMPLES
+            if self.config.is_parakeet_streaming_active()
+            else self.config.chunk_size
+        )
         return AudioRecorder(
             sample_rate=self.config.sample_rate,
-            chunk_size=self.config.chunk_size,
+            chunk_size=chunk_size,
             channels=self.config.channels,
         )
 
@@ -572,6 +602,17 @@ class PushToTalkApp:
         self.worker_thread.start()
 
         self.hotkey_service.start_service()
+
+        if self.config.is_parakeet_streaming_active():
+            try:
+                self._ensure_streaming_insert_worker()
+                self._ensure_streaming_session()
+                logger.info("Parakeet streaming WebSocket pre-warmed.")
+            except Exception as e:
+                logger.warning(
+                    "Parakeet streaming WebSocket pre-warm failed; "
+                    f"will retry on recording start: {e}"
+                )
 
         logger.info("PushToTalk is running.")
         logger.info(f"Push-to-talk: Press and hold '{self.config.hotkey}' to record.")
@@ -800,11 +841,18 @@ class PushToTalkApp:
 
     def _ensure_streaming_session(self):
         """Create or restart the long-lived Parakeet streaming session."""
-        ws_url = build_parakeet_ws_url(self.config.parakeet_endpoint)
+        ws_url = build_parakeet_ws_url(
+            self.config.parakeet_endpoint,
+            vad_end_silence_ms=self.config.parakeet_streaming_vad_end_silence_ms,
+            vad_max_chunk_seconds=self.config.parakeet_streaming_max_chunk_seconds,
+            transcription_batch_size=self.config.parakeet_streaming_batch_size,
+            transcription_batch_window_ms=self.config.parakeet_streaming_batch_window_ms,
+        )
         if (
             self.streaming_session
             and self.streaming_session.ws_url == ws_url
             and not self.streaming_session.error
+            and self.streaming_session.is_active
         ):
             self.streaming_session.start()
             return
@@ -813,6 +861,10 @@ class PushToTalkApp:
         self.streaming_session = ParakeetStreamingSession(
             self.config.parakeet_endpoint,
             on_text=self._enqueue_streaming_text,
+            vad_end_silence_ms=self.config.parakeet_streaming_vad_end_silence_ms,
+            vad_max_chunk_seconds=self.config.parakeet_streaming_max_chunk_seconds,
+            transcription_batch_size=self.config.parakeet_streaming_batch_size,
+            transcription_batch_window_ms=self.config.parakeet_streaming_batch_window_ms,
         )
         self.streaming_session.start()
 
