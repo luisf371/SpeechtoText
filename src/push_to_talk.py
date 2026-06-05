@@ -45,7 +45,7 @@ class PushToTalkConfig(BaseModel):
     # Transcription provider settings
     stt_provider: str = Field(
         default="deepgram",
-        description="STT provider: 'openai', 'deepgram', or 'custom'",
+        description="STT provider: 'openai', 'deepgram', 'parakeet', or 'custom'",
     )
     openai_api_key: str = Field(default="", description="OpenAI API key")
     deepgram_api_key: str = Field(default="", description="Deepgram API key")
@@ -69,6 +69,10 @@ class PushToTalkConfig(BaseModel):
     custom_stt_endpoint: str = Field(
         default="",
         description="Custom STT endpoint URL for OpenAI-compatible APIs",
+    )
+    parakeet_endpoint: str = Field(
+        default="http://localhost:8000",
+        description="Parakeet FastAPI service base URL or /transcribe URL",
     )
     custom_refinement_endpoint: str = Field(
         default="",
@@ -113,9 +117,9 @@ class PushToTalkConfig(BaseModel):
     @classmethod
     def validate_stt_provider(cls, v: str) -> str:
         """Validate STT provider."""
-        if v not in ["openai", "deepgram", "custom"]:
+        if v not in ["openai", "deepgram", "parakeet", "custom"]:
             raise ValueError(
-                f"stt_provider must be 'openai', 'deepgram' or 'custom', got '{v}'"
+                f"stt_provider must be 'openai', 'deepgram', 'parakeet' or 'custom', got '{v}'"
             )
         return v
 
@@ -246,6 +250,11 @@ class PushToTalkApp:
                     raise ConfigurationError(
                         "Deepgram API key is required. Set DEEPGRAM_API_KEY environment variable or provide in config."
                     )
+        elif self.config.stt_provider == "parakeet":
+            if not self.config.parakeet_endpoint:
+                raise ConfigurationError(
+                    "Parakeet STT provider requires a Parakeet endpoint URL."
+                )
         elif self.config.stt_provider == "custom":
             if not self.config.get_custom_stt_endpoint():
                 raise ConfigurationError(
@@ -388,6 +397,12 @@ class PushToTalkApp:
             api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
         elif self.config.stt_provider == "deepgram":
             api_key = self.config.deepgram_api_key or os.getenv("DEEPGRAM_API_KEY")
+        elif self.config.stt_provider == "parakeet":
+            if not self.config.parakeet_endpoint:
+                raise ConfigurationError(
+                    "Parakeet STT provider requires a Parakeet endpoint URL."
+                )
+            api_key = "local"
         elif self.config.stt_provider == "custom":
             if not self.config.get_custom_stt_endpoint():
                 raise ConfigurationError(
@@ -400,9 +415,13 @@ class PushToTalkApp:
             )
 
         base_url = (
-            self.config.get_custom_stt_endpoint()
-            if self.config.stt_provider == "custom"
-            else None
+            self.config.parakeet_endpoint
+            if self.config.stt_provider == "parakeet"
+            else (
+                self.config.get_custom_stt_endpoint()
+                if self.config.stt_provider == "custom"
+                else None
+            )
         )
 
         # Create transcriber using factory with glossary

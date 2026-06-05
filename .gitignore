@@ -29,3 +29,12 @@ push_to_talk_config.json
 
 # Cursor
 .cursor/
+
+# Serena
+.serena/
+
+.jules/
+.github/
+
+.venv/
+build/

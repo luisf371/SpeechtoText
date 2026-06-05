@@ -45,6 +45,7 @@ class APISection:
         self.custom_endpoint_var = tk.StringVar()
         self.custom_stt_endpoint_var = tk.StringVar()
         self.custom_refinement_endpoint_var = tk.StringVar()
+        self.parakeet_endpoint_var = tk.StringVar()
 
         # Provider-specific widgets
         self.openai_widgets = {}
@@ -58,6 +59,7 @@ class APISection:
         # Provider-specific model selections (to preserve when switching)
         self.openai_stt_model = "gpt-4o-mini-transcribe"
         self.deepgram_stt_model = "nova-3"
+        self.parakeet_stt_model = "parakeet-tdt-0.6b-v2"
         self.custom_stt_model = "whisper-1"
 
         # Provider-specific refinement model selections
@@ -264,7 +266,7 @@ class APISection:
         stt_provider_combo = ttk.Combobox(
             self.frame,
             textvariable=self.stt_provider_var,
-            values=["openai", "deepgram", "custom"],
+            values=["openai", "deepgram", "parakeet", "custom"],
             state="readonly",
             width=20,
         )
@@ -330,10 +332,35 @@ class APISection:
             "<<ComboboxSelected>>", self._on_refinement_model_changed
         )
 
+        # Parakeet API Endpoint
+        self.parakeet_endpoint_frame = ttk.Frame(self.frame)
+        self.parakeet_endpoint_frame.grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=2
+        )
+        self.parakeet_endpoint_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(self.parakeet_endpoint_frame, text="Parakeet Endpoint:").grid(
+            row=0, column=0, sticky="w", pady=2
+        )
+        self.parakeet_endpoint_entry = ttk.Entry(
+            self.parakeet_endpoint_frame,
+            textvariable=self.parakeet_endpoint_var,
+            width=32,
+        )
+        self.parakeet_endpoint_entry.grid(
+            row=0, column=1, sticky="w", padx=(10, 0), pady=2
+        )
+        ttk.Label(
+            self.parakeet_endpoint_frame,
+            text="(Base URL such as http://192.168.1.234:8678)",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
+
         # Custom STT API Endpoint
         self.custom_stt_endpoint_frame = ttk.Frame(self.frame)
         self.custom_stt_endpoint_frame.grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=2
+            row=5, column=0, columnspan=2, sticky="ew", pady=2
         )
         self.custom_stt_endpoint_frame.columnconfigure(1, weight=1)
 
@@ -358,7 +385,7 @@ class APISection:
         # Custom refinement API Endpoint
         self.custom_refinement_endpoint_frame = ttk.Frame(self.frame)
         self.custom_refinement_endpoint_frame.grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=2
+            row=6, column=0, columnspan=2, sticky="ew", pady=2
         )
         self.custom_refinement_endpoint_frame.columnconfigure(1, weight=1)
 
@@ -402,6 +429,8 @@ class APISection:
             self.openai_stt_model = current_model
         elif provider_value == "deepgram":
             self.deepgram_stt_model = current_model
+        elif provider_value == "parakeet":
+            self.parakeet_stt_model = current_model
         elif provider_value == "custom":
             self.custom_stt_model = current_model
 
@@ -418,6 +447,11 @@ class APISection:
             self.custom_stt_endpoint_frame.grid()
         else:
             self.custom_stt_endpoint_frame.grid_remove()
+
+        if self.stt_provider_var.get() == "parakeet":
+            self.parakeet_endpoint_frame.grid()
+        else:
+            self.parakeet_endpoint_frame.grid_remove()
 
         if self.refinement_provider_var.get() == "custom":
             self.custom_refinement_endpoint_frame.grid()
@@ -450,6 +484,7 @@ class APISection:
         # Define model lists
         openai_models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
         deepgram_models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
+        parakeet_models = ["parakeet-tdt-0.6b-v2"]
         custom_models = [
             "whisper-1",
             "whisper-large-v3",
@@ -462,6 +497,8 @@ class APISection:
             self.openai_stt_model = current_model
         elif current_model in deepgram_models:
             self.deepgram_stt_model = current_model
+        elif current_model in parakeet_models:
+            self.parakeet_stt_model = current_model
         elif current_model in custom_models:
             self.custom_stt_model = current_model
 
@@ -478,6 +515,12 @@ class APISection:
             # Restore the previously selected Deepgram model
             if self.deepgram_stt_model in models:
                 self.stt_model_var.set(self.deepgram_stt_model)
+            else:
+                self.stt_model_var.set(models[0])
+        elif provider_value == "parakeet":
+            models = parakeet_models
+            if self.parakeet_stt_model in models:
+                self.stt_model_var.set(self.parakeet_stt_model)
             else:
                 self.stt_model_var.set(models[0])
         elif provider_value == "custom":
@@ -595,6 +638,7 @@ class APISection:
             "custom_endpoint": self.custom_endpoint_var.get().strip(),
             "custom_stt_endpoint": self.custom_stt_endpoint_var.get().strip(),
             "custom_refinement_endpoint": self.custom_refinement_endpoint_var.get().strip(),
+            "parakeet_endpoint": self.parakeet_endpoint_var.get().strip(),
         }
 
     def set_values(
@@ -611,6 +655,7 @@ class APISection:
         custom_endpoint: str = "",
         custom_stt_endpoint: str = "",
         custom_refinement_endpoint: str = "",
+        parakeet_endpoint: str = "http://localhost:8000",
     ):
         """
         Set the API configuration values.
@@ -632,6 +677,7 @@ class APISection:
             custom_endpoint: Legacy custom API endpoint URL
             custom_stt_endpoint: Custom STT API endpoint URL
             custom_refinement_endpoint: Custom refinement API endpoint URL
+            parakeet_endpoint: Parakeet FastAPI service URL
         """
         # Set API keys
         self.openai_api_key_var.set(openai_api_key)
@@ -644,6 +690,7 @@ class APISection:
         self.custom_refinement_endpoint_var.set(
             custom_refinement_endpoint or custom_endpoint
         )
+        self.parakeet_endpoint_var.set(parakeet_endpoint or "http://localhost:8000")
 
         # Store provider-specific models BEFORE setting providers
         # This ensures the update methods will use these values
@@ -651,6 +698,8 @@ class APISection:
             self.openai_stt_model = stt_model
         elif stt_provider == "deepgram":
             self.deepgram_stt_model = stt_model
+        elif stt_provider == "parakeet":
+            self.parakeet_stt_model = stt_model
         elif stt_provider == "custom":
             self.custom_stt_model = stt_model
 
@@ -687,6 +736,8 @@ class APISection:
                 models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
             elif provider == "deepgram":
                 models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
+            elif provider == "parakeet":
+                models = ["parakeet-tdt-0.6b-v2"]
             elif provider == "custom":
                 models = [
                     "whisper-1",
@@ -873,6 +924,8 @@ class APISection:
         status_lines.append("\nCurrent Settings:")
         status_lines.append(f"  STT Provider: {values['stt_provider']}")
         status_lines.append(f"  STT Model: {values['stt_model']}")
+        if values["stt_provider"] == "parakeet":
+            status_lines.append(f"  Parakeet Endpoint: {values['parakeet_endpoint']}")
         status_lines.append(f"  Refinement Provider: {values['refinement_provider']}")
         status_lines.append(f"  Refinement Model: {values['refinement_model']}")
 
@@ -888,6 +941,10 @@ class APISection:
         elif values["stt_provider"] == "custom" and not values["custom_stt_endpoint"]:
             status_lines.append(
                 "\n*** WARNING: Selected STT provider (Custom) needs an STT endpoint!"
+            )
+        elif values["stt_provider"] == "parakeet" and not values["parakeet_endpoint"]:
+            status_lines.append(
+                "\n*** WARNING: Selected STT provider (Parakeet) needs a Parakeet endpoint!"
             )
 
         if values["refinement_provider"] == "openai" and openai_prefix == "[X]":

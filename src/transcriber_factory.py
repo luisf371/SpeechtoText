@@ -2,6 +2,7 @@ from typing import List, Optional
 from src.transcription_base import TranscriberBase
 from src.transcription_openai import OpenAITranscriber
 from src.transcription_deepgram import DeepgramTranscriber
+from src.transcription_parakeet import ParakeetTranscriber
 
 
 class TranscriberFactory:
@@ -19,7 +20,7 @@ class TranscriberFactory:
         Create and return a transcriber instance.
 
         Args:
-            provider: The transcription provider ("openai", "deepgram", or "custom")
+            provider: The transcription provider ("openai", "deepgram", "parakeet", or "custom")
             api_key: API key for the selected provider
             model: Model name to use for transcription
             glossary: Optional list of custom terms for improved recognition
@@ -35,6 +36,8 @@ class TranscriberFactory:
             transcriber = OpenAITranscriber(api_key=api_key, model=model)
         elif provider == "deepgram":
             transcriber = DeepgramTranscriber(api_key=api_key, model=model)
+        elif provider == "parakeet":
+            transcriber = ParakeetTranscriber(api_key=api_key, endpoint=base_url or "")
         elif provider == "custom":
             transcriber = OpenAITranscriber(
                 api_key=api_key,

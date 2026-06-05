@@ -30,6 +30,13 @@ def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
                 "Deepgram API key is required when using Deepgram provider!\n\n"
                 "Please enter your Deepgram API key or switch to OpenAI provider.",
             )
+    elif config.stt_provider == "parakeet":
+        if not config.parakeet_endpoint.strip():
+            return (
+                False,
+                "Parakeet STT provider requires a Parakeet endpoint URL!\n\n"
+                "Enter a base URL such as http://192.168.1.234:8678.",
+            )
     elif config.stt_provider == "custom":
         if not config.get_custom_stt_endpoint().strip():
             return (
