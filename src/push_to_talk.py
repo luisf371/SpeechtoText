@@ -44,7 +44,8 @@ class PushToTalkConfig(BaseModel):
 
     # Transcription provider settings
     stt_provider: str = Field(
-        default="deepgram", description="STT provider: 'openai' or 'deepgram'"
+        default="deepgram",
+        description="STT provider: 'openai', 'deepgram', or 'custom'",
     )
     openai_api_key: str = Field(default="", description="OpenAI API key")
     deepgram_api_key: str = Field(default="", description="Deepgram API key")
@@ -53,7 +54,7 @@ class PushToTalkConfig(BaseModel):
     # Text refinement settings
     refinement_provider: str = Field(
         default="cerebras",
-        description="Text refinement provider: 'openai', 'cerebras', or 'gemini'",
+        description="Text refinement provider: 'openai', 'cerebras', 'gemini', or 'custom'",
     )
     refinement_model: str = Field(
         default="llama-3.3-70b", description="Model for text refinement"
@@ -63,7 +64,15 @@ class PushToTalkConfig(BaseModel):
     custom_api_key: str = Field(default="", description="Custom API key")
     custom_endpoint: str = Field(
         default="",
-        description="Custom API endpoint URL for OpenAI-compatible APIs",
+        description="Legacy custom API endpoint URL for OpenAI-compatible APIs",
+    )
+    custom_stt_endpoint: str = Field(
+        default="",
+        description="Custom STT endpoint URL for OpenAI-compatible APIs",
+    )
+    custom_refinement_endpoint: str = Field(
+        default="",
+        description="Custom refinement endpoint URL for OpenAI-compatible APIs",
     )
 
     # Audio settings
@@ -103,9 +112,11 @@ class PushToTalkConfig(BaseModel):
     @field_validator("stt_provider")
     @classmethod
     def validate_stt_provider(cls, v: str) -> str:
-        """Validate STT provider is either 'openai' or 'deepgram'."""
-        if v not in ["openai", "deepgram"]:
-            raise ValueError(f"stt_provider must be 'openai' or 'deepgram', got '{v}'")
+        """Validate STT provider."""
+        if v not in ["openai", "deepgram", "custom"]:
+            raise ValueError(
+                f"stt_provider must be 'openai', 'deepgram' or 'custom', got '{v}'"
+            )
         return v
 
     @field_validator("refinement_provider")
@@ -124,6 +135,14 @@ class PushToTalkConfig(BaseModel):
         if self.hotkey == self.toggle_hotkey:
             raise ValueError("Push-to-talk and toggle hotkeys must be different")
         return self
+
+    def get_custom_stt_endpoint(self) -> str:
+        """Get custom STT endpoint, falling back to legacy custom_endpoint."""
+        return self.custom_stt_endpoint or self.custom_endpoint
+
+    def get_custom_refinement_endpoint(self) -> str:
+        """Get custom refinement endpoint, falling back to legacy custom_endpoint."""
+        return self.custom_refinement_endpoint or self.custom_endpoint
 
     def save_to_file(self, filepath: str):
         """Save configuration to JSON file."""
@@ -227,6 +246,13 @@ class PushToTalkApp:
                     raise ConfigurationError(
                         "Deepgram API key is required. Set DEEPGRAM_API_KEY environment variable or provide in config."
                     )
+        elif self.config.stt_provider == "custom":
+            if not self.config.get_custom_stt_endpoint():
+                raise ConfigurationError(
+                    "Custom STT provider requires a custom STT endpoint URL."
+                )
+            if not self.config.custom_api_key:
+                self.config.custom_api_key = os.getenv("OPENAI_API_KEY") or "local"
         else:
             raise ConfigurationError(
                 f"Unknown STT provider: {self.config.stt_provider}"
@@ -362,10 +388,22 @@ class PushToTalkApp:
             api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
         elif self.config.stt_provider == "deepgram":
             api_key = self.config.deepgram_api_key or os.getenv("DEEPGRAM_API_KEY")
+        elif self.config.stt_provider == "custom":
+            if not self.config.get_custom_stt_endpoint():
+                raise ConfigurationError(
+                    "Custom STT provider requires a custom STT endpoint URL."
+                )
+            api_key = self.config.custom_api_key or "local"
         else:
             raise ConfigurationError(
                 f"Unknown STT provider: {self.config.stt_provider}"
             )
+
+        base_url = (
+            self.config.get_custom_stt_endpoint()
+            if self.config.stt_provider == "custom"
+            else None
+        )
 
         # Create transcriber using factory with glossary
         return TranscriberFactory.create_transcriber(
@@ -373,6 +411,7 @@ class PushToTalkApp:
             api_key=api_key,
             model=self.config.stt_model,
             glossary=self.config.custom_glossary,
+            base_url=base_url,
         )
 
     def _create_default_text_refiner(self) -> Optional[TextRefinerBase]:
@@ -386,7 +425,11 @@ class PushToTalkApp:
             elif self.config.refinement_provider == "gemini":
                 api_key = self.config.gemini_api_key or None
             elif self.config.refinement_provider == "custom":
-                api_key = self.config.custom_api_key or None
+                if not self.config.get_custom_refinement_endpoint():
+                    raise ConfigurationError(
+                        "Custom refinement provider requires a custom refinement endpoint URL."
+                    )
+                api_key = self.config.custom_api_key or "local"
             else:
                 raise ConfigurationError(
                     f"Unknown refinement provider: {self.config.refinement_provider}"
@@ -400,7 +443,7 @@ class PushToTalkApp:
 
             # Only use custom endpoint if provider is custom
             base_url = (
-                self.config.custom_endpoint
+                self.config.get_custom_refinement_endpoint()
                 if self.config.refinement_provider == "custom"
                 else None
             )
@@ -831,6 +874,12 @@ class PushToTalkApp:
                     )
                 elif self.config.refinement_provider == "gemini":
                     api_key = self.config.gemini_api_key or os.getenv("GOOGLE_API_KEY")
+                elif self.config.refinement_provider == "custom":
+                    if not self.config.get_custom_refinement_endpoint():
+                        raise ConfigurationError(
+                            "Custom refinement provider requires a custom refinement endpoint URL."
+                        )
+                    api_key = self.config.custom_api_key or "local"
                 else:
                     raise ConfigurationError(
                         f"Unknown refinement provider: {self.config.refinement_provider}"
@@ -841,7 +890,7 @@ class PushToTalkApp:
                     api_key=api_key,
                     model=self.config.refinement_model,
                     glossary=self.config.custom_glossary,
-                    base_url=self.config.custom_endpoint or None,
+                    base_url=self.config.get_custom_refinement_endpoint() or None,
                 )
             else:
                 self.text_refiner = None

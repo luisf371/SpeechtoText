@@ -241,6 +241,8 @@ Configure your settings below, then click "Start Application" to begin:"""
                         self.api_section.refinement_provider_var,
                         self.api_section.refinement_model_var,
                         self.api_section.custom_endpoint_var,
+                        self.api_section.custom_stt_endpoint_var,
+                        self.api_section.custom_refinement_endpoint_var,
                     ]
                 )
             if self.hotkey_section:
@@ -346,6 +348,8 @@ Configure your settings below, then click "Start Application" to begin:"""
             refinement_provider=api_values["refinement_provider"],
             refinement_model=api_values["refinement_model"],
             custom_endpoint=api_values["custom_endpoint"],
+            custom_stt_endpoint=api_values["custom_stt_endpoint"],
+            custom_refinement_endpoint=api_values["custom_refinement_endpoint"],
             hotkey=hotkey_values["hotkey"],
             toggle_hotkey=hotkey_values["toggle_hotkey"],
             enable_text_refinement=feature_values["enable_text_refinement"],
@@ -371,6 +375,8 @@ Configure your settings below, then click "Start Application" to begin:"""
                 config.refinement_provider,
                 config.refinement_model,
                 config.custom_endpoint,
+                config.custom_stt_endpoint,
+                config.custom_refinement_endpoint,
             )
             self.hotkey_section.set_values(config.hotkey, config.toggle_hotkey)
             self.feature_flags_section.set_values(

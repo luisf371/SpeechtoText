@@ -44,6 +44,24 @@ class TestOpenAITranscriber:
 
         logger.info("OpenAITranscriber initialization with explicit key test passed")
 
+    def test_initialization_with_custom_base_url(self):
+        """Test OpenAITranscriber initialization with OpenAI-compatible endpoint"""
+        logger.info("Testing OpenAITranscriber initialization with custom base URL")
+
+        custom_base_url = "http://localhost:8000/v1"
+        transcriber = OpenAITranscriber(
+            api_key="local",
+            model="whisper-large-v3",
+            base_url=custom_base_url,
+        )
+
+        assert transcriber.api_key == "local"
+        assert transcriber.model == "whisper-large-v3"
+        assert transcriber.base_url == custom_base_url
+        assert str(transcriber.client.base_url).rstrip("/") == custom_base_url
+
+        logger.info("OpenAITranscriber custom base URL test passed")
+
     def test_initialization_no_api_key(self, mocker):
         """Test OpenAITranscriber initialization without API key"""
         logger.info("Testing OpenAITranscriber initialization without API key")

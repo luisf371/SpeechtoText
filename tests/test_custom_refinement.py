@@ -6,13 +6,24 @@ class TestCustomRefinement:
     def test_config_custom_provider_fields(self):
         """Test that PushToTalkConfig supports custom provider fields."""
         config = PushToTalkConfig(
+            stt_provider="custom",
             refinement_provider="custom",
             custom_api_key="test-custom-key",
-            custom_endpoint="http://localhost:11434/v1",
+            custom_stt_endpoint="http://localhost:8000/v1",
+            custom_refinement_endpoint="http://localhost:11434/v1",
         )
+        assert config.stt_provider == "custom"
         assert config.refinement_provider == "custom"
         assert config.custom_api_key == "test-custom-key"
-        assert config.custom_endpoint == "http://localhost:11434/v1"
+        assert config.get_custom_stt_endpoint() == "http://localhost:8000/v1"
+        assert config.get_custom_refinement_endpoint() == "http://localhost:11434/v1"
+
+    def test_legacy_custom_endpoint_fallback(self):
+        """Test legacy custom_endpoint still works as a fallback."""
+        config = PushToTalkConfig(custom_endpoint="http://localhost:11434/v1")
+
+        assert config.get_custom_stt_endpoint() == "http://localhost:11434/v1"
+        assert config.get_custom_refinement_endpoint() == "http://localhost:11434/v1"
 
     def test_app_initialization_with_custom_provider(self, mocker):
         """Test that PushToTalkApp correctly initializes refiner with custom settings."""
@@ -30,7 +41,7 @@ class TestCustomRefinement:
             stt_provider="openai",  # Set this to avoid Deepgram key validation
             refinement_provider="custom",
             custom_api_key="test-custom-key",
-            custom_endpoint="http://localhost:11434/v1",
+            custom_refinement_endpoint="http://localhost:11434/v1",
             openai_api_key="should-ignore-this",
             enable_text_refinement=True,
         )
@@ -46,6 +57,42 @@ class TestCustomRefinement:
         assert call_args[1]["provider"] == "custom"
         assert call_args[1]["api_key"] == "test-custom-key"
         assert call_args[1]["base_url"] == "http://localhost:11434/v1"
+
+    def test_app_initialization_with_custom_stt_provider(self, mocker):
+        """Test that PushToTalkApp initializes custom OpenAI-compatible STT."""
+        mock_transcriber_factory = mocker.patch("src.push_to_talk.TranscriberFactory")
+
+        mocker.patch("src.push_to_talk.TextInserter")
+        mocker.patch("src.push_to_talk.HotkeyService")
+        mocker.patch("src.push_to_talk.AudioRecorder")
+
+        config = PushToTalkConfig(
+            stt_provider="custom",
+            stt_model="whisper-large-v3",
+            custom_stt_endpoint="http://localhost:8000/v1",
+            enable_text_refinement=False,
+        )
+
+        _ = PushToTalkApp(config=config)
+
+        mock_transcriber_factory.create_transcriber.assert_called_once()
+        call_args = mock_transcriber_factory.create_transcriber.call_args
+        assert call_args[1]["provider"] == "custom"
+        assert call_args[1]["api_key"] == "local"
+        assert call_args[1]["model"] == "whisper-large-v3"
+        assert call_args[1]["base_url"] == "http://localhost:8000/v1"
+
+    def test_custom_stt_requires_endpoint(self):
+        """Test that custom STT fails clearly without an endpoint."""
+        from src.exceptions import ConfigurationError
+
+        config = PushToTalkConfig(
+            stt_provider="custom",
+            enable_text_refinement=False,
+        )
+
+        with pytest.raises(ConfigurationError, match="custom STT endpoint URL"):
+            PushToTalkApp(config=config)
 
     def test_text_refiner_factory_custom_creation(self, mocker):
         """Test that TextRefinerFactory creates TextRefinerOpenAI for custom provider."""
@@ -68,7 +115,11 @@ class TestCustomRefinement:
     def test_config_validation_custom_provider(self):
         """Test validation for custom provider."""
         # Valid
-        config = PushToTalkConfig(refinement_provider="custom")
+        config = PushToTalkConfig(
+            stt_provider="custom",
+            refinement_provider="custom",
+        )
+        assert config.stt_provider == "custom"
         assert config.refinement_provider == "custom"
 
         # Invalid

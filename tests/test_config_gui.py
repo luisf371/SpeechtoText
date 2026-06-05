@@ -287,6 +287,35 @@ def test_stt_model_preserved_when_switching_providers(prepared_config_gui):
     assert gui.api_section.deepgram_stt_model == "nova-2"
 
 
+def test_custom_stt_provider_shows_endpoint_and_preserves_model(prepared_config_gui):
+    """Test custom STT provider exposes endpoint and preserves local model names."""
+    gui = prepared_config_gui
+    gui.api_section.set_values(
+        "custom",
+        gui.config.openai_api_key,
+        gui.config.deepgram_api_key,
+        gui.config.cerebras_api_key,
+        gui.config.gemini_api_key,
+        "",
+        "whisper-large-v3",
+        gui.config.refinement_provider,
+        gui.config.refinement_model,
+        "http://localhost:8000/v1",
+    )
+
+    assert gui.api_section.stt_provider_var.get() == "custom"
+    assert gui.api_section.stt_model_var.get() == "whisper-large-v3"
+    assert gui.api_section.custom_stt_endpoint_var.get() == "http://localhost:8000/v1"
+
+    gui.api_section.custom_stt_endpoint_frame.grid = MagicMock()
+    gui.api_section._update_custom_endpoint_visibility()
+    gui.api_section.custom_stt_endpoint_frame.grid.assert_called_once()
+
+    gui.api_section.stt_model_var.set("Systran/faster-whisper-large-v3")
+    gui.api_section._on_stt_model_changed()
+    assert gui.api_section.custom_stt_model == "Systran/faster-whisper-large-v3"
+
+
 def test_loaded_config_not_overwritten_during_initialization(
     tmp_path, prepared_config_gui, mocker
 ):

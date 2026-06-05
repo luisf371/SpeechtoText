@@ -10,19 +10,31 @@ from src.exceptions import TranscriptionError, APIError
 
 
 class OpenAITranscriber(TranscriberBase):
-    def __init__(self, api_key: Optional[str] = None, model: str = "whisper-1"):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "whisper-1",
+        base_url: Optional[str] = None,
+    ):
         """
         Initialize the transcriber with OpenAI API.
 
         Args:
             api_key: OpenAI API key. If None, will use OPENAI_API_KEY environment variable
             model: STT Model to use (default: whisper-1)
+            base_url: Optional custom API endpoint URL (for OpenAI-compatible APIs)
         """
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         super().__init__(api_key, "OpenAI")
 
         self.model = model
-        self.client = OpenAI(api_key=self.api_key)
+        self.base_url = base_url if base_url else None
+
+        client_kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+            logger.info(f"Using custom transcription API endpoint: {self.base_url}")
+        self.client = OpenAI(**client_kwargs)
 
     def transcribe_audio(
         self, audio_file_path: str, language: Optional[str] = None

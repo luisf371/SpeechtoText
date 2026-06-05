@@ -54,9 +54,10 @@ def dependency_stubs(monkeypatch):
             self.shutdown_calls += 1
 
     class StubTranscriber:
-        def __init__(self, api_key, model):
+        def __init__(self, api_key, model, base_url=None):
             self.api_key = api_key
             self.model = model
+            self.base_url = base_url
             self.last_path = None
             self.result = "transcribed text"
             self.glossary = []
@@ -136,8 +137,8 @@ def dependency_stubs(monkeypatch):
 
     class StubTranscriberFactory:
         @staticmethod
-        def create_transcriber(provider, api_key, model, glossary=None):
-            transcriber = StubTranscriber(api_key, model)
+        def create_transcriber(provider, api_key, model, glossary=None, base_url=None):
+            transcriber = StubTranscriber(api_key, model, base_url)
             if glossary:
                 transcriber.set_glossary(glossary)
             return transcriber

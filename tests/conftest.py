@@ -126,6 +126,8 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
         config.refinement_provider,
         config.refinement_model,
         config.custom_endpoint,
+        config.custom_stt_endpoint,
+        config.custom_refinement_endpoint,
     )
 
     gui.hotkey_section = mock_gui_sections["hotkey"](MagicMock())

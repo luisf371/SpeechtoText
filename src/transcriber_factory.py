@@ -13,15 +13,17 @@ class TranscriberFactory:
         api_key: str,
         model: str,
         glossary: Optional[List[str]] = None,
+        base_url: Optional[str] = None,
     ) -> TranscriberBase:
         """
         Create and return a transcriber instance.
 
         Args:
-            provider: The transcription provider ("openai" or "deepgram")
+            provider: The transcription provider ("openai", "deepgram", or "custom")
             api_key: API key for the selected provider
             model: Model name to use for transcription
             glossary: Optional list of custom terms for improved recognition
+            base_url: Optional custom API endpoint URL (for OpenAI-compatible APIs)
 
         Returns:
             TranscriberBase instance for the selected provider
@@ -33,6 +35,12 @@ class TranscriberFactory:
             transcriber = OpenAITranscriber(api_key=api_key, model=model)
         elif provider == "deepgram":
             transcriber = DeepgramTranscriber(api_key=api_key, model=model)
+        elif provider == "custom":
+            transcriber = OpenAITranscriber(
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            )
         else:
             raise ValueError(f"Unknown transcription provider: {provider}")
 

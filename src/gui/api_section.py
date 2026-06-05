@@ -42,6 +42,9 @@ class APISection:
         self.stt_model_var = tk.StringVar()
         self.refinement_provider_var = tk.StringVar()
         self.refinement_model_var = tk.StringVar()
+        self.custom_endpoint_var = tk.StringVar()
+        self.custom_stt_endpoint_var = tk.StringVar()
+        self.custom_refinement_endpoint_var = tk.StringVar()
 
         # Provider-specific widgets
         self.openai_widgets = {}
@@ -55,6 +58,7 @@ class APISection:
         # Provider-specific model selections (to preserve when switching)
         self.openai_stt_model = "gpt-4o-mini-transcribe"
         self.deepgram_stt_model = "nova-3"
+        self.custom_stt_model = "whisper-1"
 
         # Provider-specific refinement model selections
         self.openai_refinement_model = "gpt-4.1-nano"
@@ -260,7 +264,7 @@ class APISection:
         stt_provider_combo = ttk.Combobox(
             self.frame,
             textvariable=self.stt_provider_var,
-            values=["openai", "deepgram"],
+            values=["openai", "deepgram", "custom"],
             state="readonly",
             width=20,
         )
@@ -275,7 +279,7 @@ class APISection:
             self.frame,
             textvariable=self.stt_model_var,
             values=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
-            state="readonly",
+            state="normal",
             width=20,
         )
         self.stt_model_combo.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=2)
@@ -326,29 +330,52 @@ class APISection:
             "<<ComboboxSelected>>", self._on_refinement_model_changed
         )
 
-        # Custom API Endpoint (optional)
-        self.custom_endpoint_frame = ttk.Frame(self.frame)
-        self.custom_endpoint_frame.grid(
+        # Custom STT API Endpoint
+        self.custom_stt_endpoint_frame = ttk.Frame(self.frame)
+        self.custom_stt_endpoint_frame.grid(
             row=4, column=0, columnspan=2, sticky="ew", pady=2
         )
-        self.custom_endpoint_frame.columnconfigure(1, weight=1)
+        self.custom_stt_endpoint_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(self.custom_endpoint_frame, text="Custom Endpoint:").grid(
+        ttk.Label(self.custom_stt_endpoint_frame, text="Custom STT Endpoint:").grid(
             row=0, column=0, sticky="w", pady=2
         )
-        self.custom_endpoint_var = tk.StringVar()
-        self.custom_endpoint_entry = ttk.Entry(
-            self.custom_endpoint_frame,
-            textvariable=self.custom_endpoint_var,
+        self.custom_stt_endpoint_entry = ttk.Entry(
+            self.custom_stt_endpoint_frame,
+            textvariable=self.custom_stt_endpoint_var,
             width=32,
         )
-        self.custom_endpoint_entry.grid(
+        self.custom_stt_endpoint_entry.grid(
             row=0, column=1, sticky="w", padx=(10, 0), pady=2
         )
-        # Add tooltip-style label
         ttk.Label(
-            self.custom_endpoint_frame,
-            text="(Optional: for OpenAI-compatible APIs)",
+            self.custom_stt_endpoint_frame,
+            text="(Required when STT provider is custom)",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
+
+        # Custom refinement API Endpoint
+        self.custom_refinement_endpoint_frame = ttk.Frame(self.frame)
+        self.custom_refinement_endpoint_frame.grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=2
+        )
+        self.custom_refinement_endpoint_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            self.custom_refinement_endpoint_frame, text="Custom Refinement Endpoint:"
+        ).grid(row=0, column=0, sticky="w", pady=2)
+        self.custom_refinement_endpoint_entry = ttk.Entry(
+            self.custom_refinement_endpoint_frame,
+            textvariable=self.custom_refinement_endpoint_var,
+            width=32,
+        )
+        self.custom_refinement_endpoint_entry.grid(
+            row=0, column=1, sticky="w", padx=(10, 0), pady=2
+        )
+        ttk.Label(
+            self.custom_refinement_endpoint_frame,
+            text="(Required when refinement provider is custom)",
             font=("TkDefaultFont", 8),
             foreground="gray",
         ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
@@ -361,6 +388,7 @@ class APISection:
     def _on_provider_changed(self, event=None):
         """Handle STT provider changes - show/hide appropriate API key fields."""
         self._update_stt_model_options()
+        self._update_custom_endpoint_visibility()
         if self.on_change:
             self.on_change()
 
@@ -374,6 +402,8 @@ class APISection:
             self.openai_stt_model = current_model
         elif provider_value == "deepgram":
             self.deepgram_stt_model = current_model
+        elif provider_value == "custom":
+            self.custom_stt_model = current_model
 
     def _on_refinement_provider_changed(self, event=None):
         """Handle refinement provider changes - update model options."""
@@ -383,12 +413,16 @@ class APISection:
             self.on_change()
 
     def _update_custom_endpoint_visibility(self):
-        """Show or hide the custom endpoint field based on refinement provider."""
-        provider = self.refinement_provider_var.get()
-        if provider == "custom":
-            self.custom_endpoint_frame.grid()
+        """Show or hide custom endpoint fields based on selected providers."""
+        if self.stt_provider_var.get() == "custom":
+            self.custom_stt_endpoint_frame.grid()
         else:
-            self.custom_endpoint_frame.grid_remove()
+            self.custom_stt_endpoint_frame.grid_remove()
+
+        if self.refinement_provider_var.get() == "custom":
+            self.custom_refinement_endpoint_frame.grid()
+        else:
+            self.custom_refinement_endpoint_frame.grid_remove()
 
     def _on_refinement_model_changed(self, event=None):
         """Handle refinement model changes - save to provider-specific variable."""
@@ -416,6 +450,11 @@ class APISection:
         # Define model lists
         openai_models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
         deepgram_models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
+        custom_models = [
+            "whisper-1",
+            "whisper-large-v3",
+            "Systran/faster-whisper-large-v3",
+        ]
 
         # Save the current model to the appropriate provider-specific variable
         # This preserves the selection before we change providers
@@ -423,6 +462,8 @@ class APISection:
             self.openai_stt_model = current_model
         elif current_model in deepgram_models:
             self.deepgram_stt_model = current_model
+        elif current_model in custom_models:
+            self.custom_stt_model = current_model
 
         # Update model options and restore provider-specific selection
         if provider_value == "openai":
@@ -437,6 +478,13 @@ class APISection:
             # Restore the previously selected Deepgram model
             if self.deepgram_stt_model in models:
                 self.stt_model_var.set(self.deepgram_stt_model)
+            else:
+                self.stt_model_var.set(models[0])
+        elif provider_value == "custom":
+            models = custom_models
+            # Restore the previously selected Custom model
+            if self.custom_stt_model in models:
+                self.stt_model_var.set(self.custom_stt_model)
             else:
                 self.stt_model_var.set(models[0])
         else:
@@ -545,6 +593,8 @@ class APISection:
             "refinement_provider": self.refinement_provider_var.get(),
             "refinement_model": self.refinement_model_var.get(),
             "custom_endpoint": self.custom_endpoint_var.get().strip(),
+            "custom_stt_endpoint": self.custom_stt_endpoint_var.get().strip(),
+            "custom_refinement_endpoint": self.custom_refinement_endpoint_var.get().strip(),
         }
 
     def set_values(
@@ -559,6 +609,8 @@ class APISection:
         refinement_provider: str,
         refinement_model: str,
         custom_endpoint: str = "",
+        custom_stt_endpoint: str = "",
+        custom_refinement_endpoint: str = "",
     ):
         """
         Set the API configuration values.
@@ -577,7 +629,9 @@ class APISection:
             stt_model: STT model name
             refinement_provider: Refinement provider name
             refinement_model: Refinement model name
-            custom_endpoint: Custom API endpoint URL
+            custom_endpoint: Legacy custom API endpoint URL
+            custom_stt_endpoint: Custom STT API endpoint URL
+            custom_refinement_endpoint: Custom refinement API endpoint URL
         """
         # Set API keys
         self.openai_api_key_var.set(openai_api_key)
@@ -586,6 +640,10 @@ class APISection:
         self.gemini_api_key_var.set(gemini_api_key)
         self.custom_api_key_var.set(custom_api_key)
         self.custom_endpoint_var.set(custom_endpoint)
+        self.custom_stt_endpoint_var.set(custom_stt_endpoint or custom_endpoint)
+        self.custom_refinement_endpoint_var.set(
+            custom_refinement_endpoint or custom_endpoint
+        )
 
         # Store provider-specific models BEFORE setting providers
         # This ensures the update methods will use these values
@@ -593,6 +651,8 @@ class APISection:
             self.openai_stt_model = stt_model
         elif stt_provider == "deepgram":
             self.deepgram_stt_model = stt_model
+        elif stt_provider == "custom":
+            self.custom_stt_model = stt_model
 
         if refinement_provider == "openai":
             self.openai_refinement_model = refinement_model
@@ -627,6 +687,12 @@ class APISection:
                 models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
             elif provider == "deepgram":
                 models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
+            elif provider == "custom":
+                models = [
+                    "whisper-1",
+                    "whisper-large-v3",
+                    "Systran/faster-whisper-large-v3",
+                ]
             else:
                 models = []
             self.stt_model_combo["values"] = models
@@ -773,20 +839,31 @@ class APISection:
             )
 
         # Custom provider info (no validation - endpoints vary too widely)
+        selected_contexts = []
+        if values["stt_provider"] == "custom":
+            selected_contexts.append("Selected STT Model")
+        if values["refinement_provider"] == "custom":
+            selected_contexts.append("Selected Refinement Model")
         selected_marker = (
-            " (Selected Refinement Model)"
-            if values["refinement_provider"] == "custom"
-            else ""
+            f" ({', '.join(selected_contexts)})" if selected_contexts else ""
         )
-        if values["custom_api_key"] or values["custom_endpoint"]:
+        if (
+            values["custom_api_key"]
+            or values["custom_stt_endpoint"]
+            or values["custom_refinement_endpoint"]
+        ):
             status_lines.append(f"\n[ ] Custom{selected_marker}:")
             status_lines.append("  Status: Configured (not validated)")
             if values["custom_api_key"]:
                 status_lines.append(
                     f"  Key: {'*' * min(len(values['custom_api_key']), 20)}"
                 )
-            if values["custom_endpoint"]:
-                status_lines.append(f"  Endpoint: {values['custom_endpoint']}")
+            if values["custom_stt_endpoint"]:
+                status_lines.append(f"  STT Endpoint: {values['custom_stt_endpoint']}")
+            if values["custom_refinement_endpoint"]:
+                status_lines.append(
+                    f"  Refinement Endpoint: {values['custom_refinement_endpoint']}"
+                )
         else:
             status_lines.append(f"\n[ ] Custom{selected_marker}:")
             status_lines.append("  Status: Not configured")
@@ -808,6 +885,10 @@ class APISection:
             status_lines.append(
                 "\n*** WARNING: Selected STT provider (Deepgram) has an invalid API key!"
             )
+        elif values["stt_provider"] == "custom" and not values["custom_stt_endpoint"]:
+            status_lines.append(
+                "\n*** WARNING: Selected STT provider (Custom) needs an STT endpoint!"
+            )
 
         if values["refinement_provider"] == "openai" and openai_prefix == "[X]":
             status_lines.append(
@@ -820,6 +901,13 @@ class APISection:
         elif values["refinement_provider"] == "gemini" and gemini_prefix == "[X]":
             status_lines.append(
                 "\n*** WARNING: Selected refinement provider (Gemini) has an invalid API key!"
+            )
+        elif (
+            values["refinement_provider"] == "custom"
+            and not values["custom_refinement_endpoint"]
+        ):
+            status_lines.append(
+                "\n*** WARNING: Selected refinement provider (Custom) needs a refinement endpoint!"
             )
 
         return "\n".join(status_lines)

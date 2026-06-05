@@ -30,6 +30,13 @@ def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
                 "Deepgram API key is required when using Deepgram provider!\n\n"
                 "Please enter your Deepgram API key or switch to OpenAI provider.",
             )
+    elif config.stt_provider == "custom":
+        if not config.get_custom_stt_endpoint().strip():
+            return (
+                False,
+                "Custom STT provider requires an OpenAI-compatible endpoint URL!\n\n"
+                "Enter a URL such as http://localhost:8000/v1.",
+            )
     else:
         return False, f"Unknown provider: {config.stt_provider}"
 

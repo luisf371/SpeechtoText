@@ -66,6 +66,25 @@ class TestTranscriberFactory:
             "Factory creates Deepgram transcriber with custom model test passed"
         )
 
+    def test_create_custom_openai_compatible_transcriber(self):
+        """Test factory creates custom OpenAI-compatible transcriber"""
+        logger.info("Testing factory creates custom OpenAI-compatible transcriber")
+
+        transcriber = TranscriberFactory.create_transcriber(
+            provider="custom",
+            api_key="local",
+            model="whisper-large-v3",
+            base_url="http://localhost:8000/v1",
+        )
+
+        assert isinstance(transcriber, OpenAITranscriber)
+        assert isinstance(transcriber, TranscriberBase)
+        assert transcriber.api_key == "local"
+        assert transcriber.model == "whisper-large-v3"
+        assert transcriber.base_url == "http://localhost:8000/v1"
+
+        logger.info("Factory creates custom OpenAI-compatible transcriber test passed")
+
     def test_invalid_provider_raises_error(self):
         """Test invalid provider raises ValueError"""
         logger.info("Testing invalid provider raises ValueError")
