@@ -110,6 +110,11 @@ class PushToTalkConfig(BaseModel):
         ge=0,
         description="Parakeet WebSocket transcription micro-batch gather window in milliseconds",
     )
+    parakeet_rest_auto_stop_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="Maximum Parakeet REST recording duration before graceful auto-stop",
+    )
     custom_refinement_endpoint: str = Field(
         default="",
         description="Custom refinement endpoint URL for OpenAI-compatible APIs",
@@ -342,6 +347,7 @@ class PushToTalkApp:
         self.streaming_insert_thread: Optional[threading.Thread] = None
         self.streaming_insert_lock = threading.Lock()
         self.streaming_frame_buffer = bytearray()
+        self.rest_auto_stop_timer: Optional[threading.Timer] = None
 
         # Initialize all components (only creates components that are None)
         self._initialize_components()
@@ -667,6 +673,7 @@ class PushToTalkApp:
 
         self._close_streaming_session()
         self._stop_streaming_insert_worker()
+        self._cancel_rest_auto_stop_timer()
 
         if self.audio_recorder:
             self.audio_recorder.shutdown()
@@ -706,6 +713,8 @@ class PushToTalkApp:
                     self._do_start_recording()
                 elif command == "STOP_RECORDING":
                     self._do_stop_recording()
+                elif command == "AUTO_STOP_RECORDING":
+                    self._do_stop_recording(auto_stop=True)
                 else:
                     logger.warning(f"Unknown command received: {command}")
 
@@ -737,11 +746,19 @@ class PushToTalkApp:
                 logger.error("Failed to start Parakeet streaming recording")
             return
 
-        if not self.audio_recorder.start_recording():
+        if self.audio_recorder.start_recording():
+            self._start_rest_auto_stop_timer()
+        else:
             logger.error("Failed to start audio recording")
 
-    def _do_stop_recording(self):
+    def _do_stop_recording(self, auto_stop: bool = False):
         """Internal method to perform stop recording actions."""
+        if not self.config.is_parakeet_streaming_active():
+            if not getattr(self.audio_recorder, "is_recording", False):
+                self._cancel_rest_auto_stop_timer()
+                logger.debug("Ignoring stop command; no REST recording is active")
+                return
+
         # Play audio feedback immediately when hotkey is released
         if self.config.enable_audio_feedback:
             play_stop_feedback()
@@ -749,6 +766,14 @@ class PushToTalkApp:
         if self.config.is_parakeet_streaming_active():
             self._stop_parakeet_streaming_recording()
             return
+
+        self._cancel_rest_auto_stop_timer()
+        if auto_stop:
+            logger.info(
+                "Auto-stopping Parakeet REST recording after "
+                f"{self.config.parakeet_rest_auto_stop_seconds:.1f}s"
+            )
+            self._mark_hotkey_recording_stopped()
 
         # Stop recording and get audio file (fast operation)
         audio_file = self.audio_recorder.stop_recording()
@@ -776,6 +801,44 @@ class PushToTalkApp:
         processing_thread.start()
 
         logger.info("Recording stopped, processing in background")
+
+    def _start_rest_auto_stop_timer(self):
+        """Start a timer that gracefully stops long Parakeet REST recordings."""
+        self._cancel_rest_auto_stop_timer()
+        if self.config.stt_provider != "parakeet" or self.config.parakeet_streaming_enabled:
+            return
+
+        timer = threading.Timer(
+            self.config.parakeet_rest_auto_stop_seconds,
+            self._on_rest_auto_stop_timer,
+        )
+        timer.daemon = True
+        self.rest_auto_stop_timer = timer
+        timer.start()
+        logger.debug(
+            "Parakeet REST auto-stop timer started for "
+            f"{self.config.parakeet_rest_auto_stop_seconds:.1f}s"
+        )
+
+    def _cancel_rest_auto_stop_timer(self):
+        """Cancel any pending Parakeet REST auto-stop timer."""
+        timer = self.rest_auto_stop_timer
+        self.rest_auto_stop_timer = None
+        if timer:
+            timer.cancel()
+
+    def _on_rest_auto_stop_timer(self):
+        """Queue a graceful stop when a Parakeet REST recording reaches its limit."""
+        self.command_queue.put("AUTO_STOP_RECORDING")
+
+    def _mark_hotkey_recording_stopped(self):
+        """Keep hotkey state consistent after a timer-driven stop."""
+        if hasattr(self.hotkey_service, "is_recording"):
+            self.hotkey_service.is_recording = False
+        if hasattr(self.hotkey_service, "is_toggle_mode"):
+            self.hotkey_service.is_toggle_mode = False
+        if hasattr(self.hotkey_service, "recording_state"):
+            self.hotkey_service.recording_state = "idle"
 
     def _start_parakeet_streaming_recording(self) -> bool:
         """Start recording and stream live PCM frames to Parakeet."""

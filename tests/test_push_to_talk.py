@@ -39,15 +39,19 @@ def dependency_stubs(monkeypatch):
             self.stop_calls = 0
             self.shutdown_calls = 0
             self.should_start = True
+            self.is_recording = False
             self.audio_file = None
             tracker["audio_recorder"].append(self)
 
         def start_recording(self):
             self.start_calls += 1
+            if self.should_start:
+                self.is_recording = True
             return self.should_start
 
         def stop_recording(self):
             self.stop_calls += 1
+            self.is_recording = False
             return self.audio_file
 
         def shutdown(self):
@@ -222,6 +226,8 @@ def process_queue(app):
             app._do_start_recording()
         elif cmd == "STOP_RECORDING":
             app._do_stop_recording()
+        elif cmd == "AUTO_STOP_RECORDING":
+            app._do_stop_recording(auto_stop=True)
         app.command_queue.task_done()
 
 
@@ -418,6 +424,102 @@ def test_inactive_parakeet_streaming_session_is_recreated(make_app, monkeypatch)
     assert app.streaming_session is StubStreamingSession.instances[-1]
     assert app.streaming_session is not old_session
     assert app.streaming_session.start_calls == 1
+
+
+def test_parakeet_rest_recording_starts_auto_stop_timer(
+    make_app, dependency_stubs, monkeypatch
+):
+    class StubTimer:
+        instances = []
+
+        def __init__(self, seconds, callback):
+            self.seconds = seconds
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+            self.cancelled = False
+            self.instances.append(self)
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(push_to_talk.threading, "Timer", StubTimer)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=False,
+        parakeet_rest_auto_stop_seconds=120.0,
+        enable_text_refinement=False,
+    )
+    app = make_app(config)
+
+    app._do_start_recording()
+
+    recorder = dependency_stubs.last("audio_recorder")
+    assert recorder.start_calls == 1
+    assert recorder.is_recording is True
+    assert len(StubTimer.instances) == 1
+    assert StubTimer.instances[0].seconds == 120.0
+    assert StubTimer.instances[0].started is True
+    assert StubTimer.instances[0].daemon is True
+
+
+def test_parakeet_rest_auto_stop_processes_audio_once(
+    make_app,
+    dependency_stubs,
+    feedback_spy,
+    immediate_thread,
+    tmp_path,
+    monkeypatch,
+):
+    class StubTimer:
+        def __init__(self, seconds, callback):
+            self.seconds = seconds
+            self.callback = callback
+            self.daemon = False
+            self.cancelled = False
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(push_to_talk.threading, "Timer", StubTimer)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=False,
+        parakeet_rest_auto_stop_seconds=120.0,
+        enable_text_refinement=False,
+    )
+    app = make_app(config)
+
+    recorder = dependency_stubs.last("audio_recorder")
+    transcriber = dependency_stubs.last("transcriber")
+    inserter = dependency_stubs.last("text_inserter")
+    hotkey_service = dependency_stubs.last("hotkey_service")
+    audio_path = tmp_path / "auto-stop.wav"
+    audio_path.write_bytes(b"audio")
+    recorder.audio_file = str(audio_path)
+    transcriber.result = "auto stopped text"
+
+    app._on_start_recording()
+    process_queue(app)
+    app._on_rest_auto_stop_timer()
+    process_queue(app)
+    app._on_stop_recording()
+    process_queue(app)
+
+    assert recorder.start_calls == 1
+    assert recorder.stop_calls == 1
+    assert transcriber.last_path == str(audio_path)
+    assert inserter.insert_calls == 1
+    assert hotkey_service.recording_state == "idle"
+    assert feedback_spy["start"] == 1
+    assert feedback_spy["stop"] == 1
+    assert not audio_path.exists()
 
 
 def test_process_recorded_audio_pipeline(
