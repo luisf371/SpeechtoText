@@ -440,6 +440,7 @@ class ConfigurationWindow:
                     self.feature_flags_section.enable_text_refinement_var,
                     self.feature_flags_section.enable_logging_var,
                     self.feature_flags_section.enable_audio_feedback_var,
+                    self.feature_flags_section.streaming_boundary_space_keypress_var,
                     self.feature_flags_section.debug_mode_var,
                 ])
             for var in all_vars:
@@ -515,6 +516,9 @@ class ConfigurationWindow:
             enable_text_refinement=ff["enable_text_refinement"],
             enable_logging=ff["enable_logging"],
             enable_audio_feedback=ff["enable_audio_feedback"],
+            streaming_boundary_space_keypress=ff[
+                "streaming_boundary_space_keypress"
+            ],
             debug_mode=ff["debug_mode"],
             custom_glossary=self.glossary_section.get_terms(),
             custom_refinement_prompt=self.prompt_section.get_prompt(),
@@ -550,6 +554,7 @@ class ConfigurationWindow:
                 config.enable_logging,
                 config.enable_audio_feedback,
                 config.debug_mode,
+                config.streaming_boundary_space_keypress,
             )
             self.glossary_section.set_terms(config.custom_glossary)
             self.prompt_section.set_prompt(config.custom_refinement_prompt)

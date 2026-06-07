@@ -96,6 +96,7 @@ def test_config_changes_trigger_async_save(tmp_path, prepared_config_gui, mocker
 
     # Test the actual async save functionality
     gui.hotkey_section.hotkey_var.set("ctrl+alt+test")
+    gui.feature_flags_section.streaming_boundary_space_keypress_var.set(False)
     gui._notify_config_changed()
 
     # Save to our test file
@@ -112,6 +113,7 @@ def test_config_changes_trigger_async_save(tmp_path, prepared_config_gui, mocker
 
     assert saved_data["hotkey"] == "ctrl+alt+test"
     assert saved_data["openai_api_key"] == "test-key"
+    assert saved_data["streaming_boundary_space_keypress"] is False
 
 
 def test_concurrent_async_saves_are_deduplicated(tmp_path, prepared_config_gui):

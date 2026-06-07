@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 from loguru import logger
@@ -38,6 +39,8 @@ from src.exceptions import (
     APIError,
 )
 
+STREAMING_INSERT_PTT_RELEASE_WAIT_SECONDS = 2.0
+
 
 def _get_default_hotkey() -> str:
     """Get platform-specific default hotkey."""
@@ -47,6 +50,76 @@ def _get_default_hotkey() -> str:
 def _get_default_toggle_hotkey() -> str:
     """Get platform-specific default toggle hotkey."""
     return f"{'cmd' if sys.platform == 'darwin' else 'ctrl'}+cmd"
+
+
+def normalize_sentence_spacing(text: str) -> str:
+    """Repair common transcription joins after sentence punctuation."""
+
+    def previous_token_starts_lowercase(index: int) -> bool:
+        token_match = re.search(r"[A-Za-z][A-Za-z0-9_-]*$", text[:index])
+        return bool(token_match and token_match.group(0)[0].islower())
+
+    def add_space(match: re.Match[str]) -> str:
+        punctuation = match.group(1)
+        letter = match.group(2)
+        previous_index = match.start() - 1
+        is_single_letter_period = (
+            punctuation == "."
+            and previous_index >= 0
+            and text[previous_index].isalpha()
+            and (previous_index == 0 or not text[previous_index - 1].isalnum())
+            and match.end() < len(text)
+            and text[match.end()] == "."
+        )
+        if is_single_letter_period:
+            return match.group(0)
+        if (
+            punctuation == "."
+            and letter.islower()
+            and previous_token_starts_lowercase(match.start())
+        ):
+            return match.group(0)
+        return f"{punctuation} {letter}"
+
+    return re.sub(r"([.!?])([A-Za-z])", add_space, text)
+
+
+def streaming_segment_separator(previous_char: str | None, text: str) -> str:
+    """Return the separator to paste before a finalized streaming segment."""
+    if previous_char is None or not text:
+        return ""
+    if previous_char.isspace():
+        return ""
+    if text[0] in ".,;:!?)]}'":
+        return ""
+    if previous_char in "([{/'-":
+        return ""
+    return " "
+
+
+def last_streaming_text_char(text: str) -> str | None:
+    """Return the last meaningful character from text inserted by streaming."""
+    stripped = text.rstrip()
+    if not stripped:
+        return None
+    return stripped[-1]
+
+
+def normalize_streaming_segment_text(text: str) -> str:
+    """Normalize a finalized streaming segment for insertion."""
+    return normalize_sentence_spacing(text.strip())
+
+
+def format_streaming_insert_segment(
+    text: str, previous_char: str | None
+) -> tuple[str, str, str | None]:
+    """Format a finalized streaming segment and return updated boundary state."""
+    text = normalize_streaming_segment_text(text)
+    if not text:
+        return "", "", previous_char
+
+    separator = streaming_segment_separator(previous_char, text)
+    return separator, text, last_streaming_text_char(text)
 
 
 class PushToTalkConfig(BaseModel):
@@ -141,6 +214,10 @@ class PushToTalkConfig(BaseModel):
     enable_audio_feedback: bool = Field(
         default=True, description="Enable audio feedback"
     )
+    streaming_boundary_space_keypress: bool = Field(
+        default=True,
+        description="Press Space for streaming text boundaries instead of pasting leading whitespace",
+    )
     debug_mode: bool = Field(default=False, description="Enable debug mode")
 
     # Custom glossary for transcription refinement
@@ -231,6 +308,7 @@ class PushToTalkConfig(BaseModel):
         Non-Critical Fields (runtime-only changes):
         - enable_logging: Runtime logging toggle
         - enable_audio_feedback: Runtime audio feedback toggle
+        - streaming_boundary_space_keypress: Runtime text insertion behavior
 
         Args:
             other: The other configuration to compare against
@@ -243,6 +321,7 @@ class PushToTalkConfig(BaseModel):
         non_critical_fields = {
             "enable_logging",  # Logging toggle (runtime setting)
             "enable_audio_feedback",  # Audio feedback toggle (runtime setting)
+            "streaming_boundary_space_keypress",  # Streaming insertion behavior
         }
 
         # Get all fields from the Pydantic model
@@ -346,7 +425,9 @@ class PushToTalkApp:
         self.streaming_insert_queue: queue.Queue[str | None] = queue.Queue()
         self.streaming_insert_thread: Optional[threading.Thread] = None
         self.streaming_insert_lock = threading.Lock()
+        self.streaming_insert_last_char: str | None = None
         self.streaming_frame_buffer = bytearray()
+        self.streaming_drain_thread: Optional[threading.Thread] = None
         self.rest_auto_stop_timer: Optional[threading.Timer] = None
 
         # Initialize all components (only creates components that are None)
@@ -372,6 +453,9 @@ class PushToTalkApp:
         # Clean up existing components if they exist
         if self.hotkey_service:
             self.hotkey_service.stop_service()
+
+        if force_recreate:
+            self._close_streaming_session()
 
         # Clean up audio recorder before recreating (PyAudio resources must be explicitly released)
         if self.audio_recorder and not self._injected_audio_recorder and force_recreate:
@@ -577,6 +661,9 @@ class PushToTalkApp:
         if new_config.requires_component_reinitialization(old_config):
             logger.info("Configuration changes require component reinitialization")
             self._initialize_components(force_recreate=True)
+            if self.is_running and self.config.is_parakeet_streaming_active():
+                self._ensure_streaming_insert_worker()
+                self._ensure_streaming_session()
         else:
             logger.info("Configuration updated without requiring component changes")
 
@@ -737,6 +824,10 @@ class PushToTalkApp:
 
     def _do_start_recording(self):
         """Internal method to perform start recording actions."""
+        if getattr(self.audio_recorder, "is_recording", False):
+            logger.debug("Ignoring start command; recording is already active")
+            return
+
         # Play audio feedback if enabled
         if self.config.enable_audio_feedback:
             play_start_feedback()
@@ -753,11 +844,15 @@ class PushToTalkApp:
 
     def _do_stop_recording(self, auto_stop: bool = False):
         """Internal method to perform stop recording actions."""
-        if not self.config.is_parakeet_streaming_active():
-            if not getattr(self.audio_recorder, "is_recording", False):
+        if not getattr(self.audio_recorder, "is_recording", False):
+            if not self.config.is_parakeet_streaming_active():
                 self._cancel_rest_auto_stop_timer()
                 logger.debug("Ignoring stop command; no REST recording is active")
-                return
+            else:
+                logger.debug(
+                    "Ignoring stop command; no Parakeet streaming recording is active"
+                )
+            return
 
         # Play audio feedback immediately when hotkey is released
         if self.config.enable_audio_feedback:
@@ -845,6 +940,8 @@ class PushToTalkApp:
         try:
             self._validate_parakeet_streaming_audio_settings()
             self._ensure_streaming_insert_worker()
+            self._wait_for_streaming_drain()
+            self._wait_for_streaming_insert_queue()
             self.streaming_frame_buffer.clear()
             self._ensure_streaming_session()
 
@@ -937,15 +1034,58 @@ class PushToTalkApp:
         if not session:
             return
 
-        threading.Thread(
+        if self.streaming_drain_thread and self.streaming_drain_thread.is_alive():
+            logger.debug("Parakeet streaming drain already in progress")
+            return
+
+        self.streaming_drain_thread = threading.Thread(
             target=session.finish_recording,
             daemon=True,
             name="ParakeetStreamingDrain",
-        ).start()
+        )
+        self.streaming_drain_thread.start()
+
+    def _wait_for_streaming_drain(self):
+        """Wait for the previous recording's final-text drain before reusing the socket."""
+        thread = self.streaming_drain_thread
+        if not thread:
+            return
+
+        if thread is threading.current_thread():
+            return
+
+        if thread.is_alive():
+            session = self.streaming_session
+            timeout = (session.drain_timeout + 0.5) if session else 1.0
+            thread.join(timeout=timeout)
+            if thread.is_alive():
+                logger.warning(
+                    "Timed out waiting for Parakeet streaming drain before continuing"
+                )
+                return
+
+        self.streaming_drain_thread = None
+
+    def _wait_for_streaming_insert_queue(self, timeout: float = 2.0):
+        """Give prior streaming text inserts a bounded chance to finish."""
+        deadline = time.monotonic() + timeout
+        while getattr(self.streaming_insert_queue, "unfinished_tasks", 0):
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Timed out waiting for queued Parakeet streaming text insertion"
+                )
+                return
+            time.sleep(0.01)
 
     def _close_streaming_session(self):
         """Close the active streaming session if one exists."""
         session = self.streaming_session
+        if session:
+            if getattr(self.audio_recorder, "is_recording", False):
+                self.audio_recorder.stop_recording()
+                self._flush_streaming_frame_buffer()
+                self._finish_streaming_recording()
+            self._wait_for_streaming_drain()
         self.streaming_session = None
         if session:
             session.stop()
@@ -971,9 +1111,40 @@ class PushToTalkApp:
 
     def _enqueue_streaming_text(self, text: str):
         """Queue a finalized streaming segment for ordered insertion."""
-        text = text.strip()
-        if text:
+        if text.strip():
             self.streaming_insert_queue.put(text)
+
+    def _format_streaming_insert_segment(self, text: str) -> str:
+        """Add a stable separator before streamed segments after the first one."""
+        separator, segment, _ = format_streaming_insert_segment(
+            text, self.streaming_insert_last_char
+        )
+        return f"{separator}{segment}"
+
+    def _is_push_hotkey_active(self) -> bool:
+        """Return True while the configured push-to-talk hotkey is held."""
+        checker = getattr(self.hotkey_service, "is_push_hotkey_active", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception as e:
+                logger.debug(f"Could not read push-to-talk key state: {e}")
+
+        return bool(getattr(self.hotkey_service, "_push_hotkey_active", False))
+
+    def _wait_for_push_hotkey_release_before_insert(
+        self,
+        timeout: float = STREAMING_INSERT_PTT_RELEASE_WAIT_SECONDS,
+    ):
+        """Avoid synthetic paste/space keys while the PTT hotkey is still held."""
+        deadline = time.monotonic() + timeout
+        while self._is_push_hotkey_active():
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "Timed out waiting for push-to-talk release before text insertion"
+                )
+                return
+            time.sleep(0.01)
 
     def _streaming_insert_loop(self):
         """Insert streaming text segments serially to avoid clipboard races."""
@@ -985,8 +1156,31 @@ class PushToTalkApp:
 
             try:
                 with self.streaming_insert_lock:
-                    segment = text if text.endswith((" ", "\n")) else f"{text} "
-                    success = self.text_inserter.insert_text(segment)
+                    previous_last_char = self.streaming_insert_last_char
+                    separator, segment, next_last_char = format_streaming_insert_segment(
+                        text, previous_last_char
+                    )
+                    if not segment:
+                        success = True
+                        continue
+                    logger.debug(
+                        "Streaming insert segment: "
+                        f"raw={text!r}, separator={separator!r}, "
+                        f"segment={segment!r}, "
+                        f"previous_last_char={previous_last_char!r}, "
+                        f"next_last_char={next_last_char!r}"
+                    )
+                    success = True
+                    self._wait_for_push_hotkey_release_before_insert()
+                    if separator:
+                        if self.config.streaming_boundary_space_keypress:
+                            success = self.text_inserter.insert_space()
+                        else:
+                            segment = f"{separator}{segment}"
+                    if success:
+                        success = self.text_inserter.insert_text(segment)
+                    if success:
+                        self.streaming_insert_last_char = next_last_char
                 if success:
                     logger.info("Streaming text insertion successful")
                 else:
@@ -1057,6 +1251,7 @@ class PushToTalkApp:
             # Insert text into active window
             logger.info("Inserting text into active window...")
             try:
+                final_text = normalize_sentence_spacing(final_text)
                 success = self.text_inserter.insert_text(final_text)
                 if success:
                     logger.info("Text insertion successful")

@@ -43,8 +43,10 @@ def dependency_stubs(monkeypatch):
             self.audio_file = None
             tracker["audio_recorder"].append(self)
 
-        def start_recording(self):
+        def start_recording(self, chunk_callback=None, store_audio_data=True):
             self.start_calls += 1
+            self.chunk_callback = chunk_callback
+            self.store_audio_data = store_audio_data
             if self.should_start:
                 self.is_recording = True
             return self.should_start
@@ -95,6 +97,7 @@ def dependency_stubs(monkeypatch):
     class StubTextInserter:
         def __init__(self):
             self.last_text = None
+            self.inserted_texts = []
             self.insert_calls = 0
             self.should_succeed = True
             self.window_title = "TestWindow"
@@ -103,6 +106,13 @@ def dependency_stubs(monkeypatch):
         def insert_text(self, text):
             self.insert_calls += 1
             self.last_text = text
+            self.inserted_texts.append(text)
+            return self.should_succeed
+
+        def insert_space(self):
+            self.insert_calls += 1
+            self.last_text = " "
+            self.inserted_texts.append(" ")
             return self.should_succeed
 
         def get_active_window_title(self):
@@ -426,6 +436,438 @@ def test_inactive_parakeet_streaming_session_is_recreated(make_app, monkeypatch)
     assert app.streaming_session.start_calls == 1
 
 
+def test_duplicate_streaming_start_does_not_close_socket(make_app, monkeypatch):
+    class StubStreamingSession:
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.error = None
+            self.is_active = True
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self):
+            self.start_calls += 1
+
+        def stop(self):
+            self.stop_calls += 1
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        enable_audio_feedback=False,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+    app._do_start_recording()
+    session = app.streaming_session
+    app._do_start_recording()
+
+    assert session.stop_calls == 0
+    assert app.audio_recorder.start_calls == 1
+
+
+def test_streaming_start_waits_for_previous_drain(make_app, monkeypatch):
+    class StubThread:
+        def __init__(self):
+            self.join_calls = 0
+            self.alive = True
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            self.timeout = timeout
+            self.alive = False
+
+    class StubStreamingSession:
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.error = None
+            self.is_active = True
+            self.drain_timeout = 2.0
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        enable_audio_feedback=False,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+    app.streaming_session = StubStreamingSession(
+        config.parakeet_endpoint, app._enqueue_streaming_text
+    )
+    drain_thread = StubThread()
+    app.streaming_drain_thread = drain_thread
+    app.streaming_insert_queue.put("previous text")
+    app.streaming_insert_queue.get()
+    app.streaming_insert_queue.task_done()
+
+    assert app._start_parakeet_streaming_recording() is True
+
+    assert drain_thread.join_calls == 1
+    assert drain_thread.timeout == 2.5
+    assert app.streaming_drain_thread is None
+    assert app.audio_recorder.start_calls == 1
+
+
+def test_streaming_start_preserves_existing_insert_boundary_state(
+    make_app, monkeypatch
+):
+    class StubStreamingSession:
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.error = None
+            self.is_active = True
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        enable_audio_feedback=False,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+    app.streaming_insert_last_char = "."
+
+    assert app._start_parakeet_streaming_recording() is True
+    assert app.streaming_insert_last_char == "."
+
+
+def test_streaming_reconfiguration_closes_old_session_and_prewarms_new(
+    make_app, monkeypatch
+):
+    class StubStreamingSession:
+        instances = []
+
+        def __init__(self, endpoint, on_text, **kwargs):
+            self.ws_url = push_to_talk.build_parakeet_ws_url(endpoint)
+            self.error = None
+            self.is_active = True
+            self.start_calls = 0
+            self.stop_calls = 0
+            self.instances.append(self)
+
+        def start(self):
+            self.start_calls += 1
+
+        def stop(self):
+            self.stop_calls += 1
+            self.is_active = False
+
+    monkeypatch.setattr(push_to_talk, "ParakeetStreamingSession", StubStreamingSession)
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_endpoint="http://localhost:8000",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+    app = make_app(config)
+    app.is_running = True
+    app._ensure_streaming_session()
+    old_session = app.streaming_session
+
+    new_config = config.model_copy(
+        update={"parakeet_endpoint": "http://localhost:9000"}
+    )
+    app.update_configuration(new_config)
+
+    assert old_session.stop_calls == 1
+    assert app.streaming_session is StubStreamingSession.instances[-1]
+    assert app.streaming_session is not old_session
+    assert app.streaming_session.ws_url == "ws://localhost:9000/ws"
+    assert app.streaming_session.start_calls == 1
+
+
+def test_streaming_insert_adds_spaces_between_finalized_segments(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("My name is The Real Slim Shady.")
+    app._enqueue_streaming_text("All you other slim shadies are just vitating")
+    app._enqueue_streaming_text("Were the real slim shady?")
+    app._enqueue_streaming_text("Please stand up.")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == (
+        "My name is The Real Slim Shady. "
+        "All you other slim shadies are just vitating "
+        "Were the real slim shady? Please stand up."
+    )
+
+
+def test_streaming_insert_adds_single_space_after_pause_segments(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("Hello.")
+    app._enqueue_streaming_text("It's a me you're looking for")
+    app._enqueue_streaming_text("I can see it in your eyes.")
+    app._enqueue_streaming_text("I can see it in your smile.")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == (
+        "Hello. It's a me you're looking for "
+        "I can see it in your eyes. I can see it in your smile."
+    )
+
+
+def test_streaming_insert_preserves_boundary_across_streaming_recordings(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("The")
+    app.streaming_insert_queue.put(None)
+    app._streaming_insert_loop()
+
+    app._enqueue_streaming_text("Wheels on the bus go round and round.")
+    app.streaming_insert_queue.put(None)
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == (
+        "The Wheels on the bus go round and round."
+    )
+
+
+def test_streaming_insert_uses_server_supplied_leading_space(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("The")
+    app._enqueue_streaming_text(" Wheels on the bus")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == "The Wheels on the bus"
+
+
+def test_streaming_insert_keeps_punctuation_and_apostrophe_continuations(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("Hello")
+    app._enqueue_streaming_text(".")
+    app._enqueue_streaming_text("Don")
+    app._enqueue_streaming_text("'t stop")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == "Hello. Don't stop"
+
+
+def test_streaming_insert_repairs_reported_bus_pause_sample(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("The")
+    app._enqueue_streaming_text("Wheels on the bus go round and round.")
+    app._enqueue_streaming_text("Round.")
+    app._enqueue_streaming_text("Round and round, round and round.")
+    app._enqueue_streaming_text("The wheels on the bus go round and round.")
+    app._enqueue_streaming_text("All through the town.")
+    app._enqueue_streaming_text("The")
+    app._enqueue_streaming_text("If you want the bus go beep beep beep.")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == (
+        "The Wheels on the bus go round and round. Round. Round and round, "
+        "round and round. The wheels on the bus go round and round. "
+        "All through the town. The If you want the bus go beep beep beep."
+    )
+
+
+def test_streaming_insert_repairs_generic_pause_boundaries(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("The wheels on the bus go round and round.")
+    app._enqueue_streaming_text("Well then")
+    app._enqueue_streaming_text("Round, round and round the wheels and the bus go.")
+    app._enqueue_streaming_text("Well")
+    app._enqueue_streaming_text("Round and round.")
+    app._enqueue_streaming_text("Through the town")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert "".join(inserter.inserted_texts) == (
+        "The wheels on the bus go round and round. Well then Round, round "
+        "and round the wheels and the bus go. Well Round and round. "
+        "Through the town"
+    )
+
+
+def test_streaming_insert_can_paste_boundary_space_with_chunk(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    app.config.streaming_boundary_space_keypress = False
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text("The")
+    app._enqueue_streaming_text("wheels")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert inserter.inserted_texts == ["The", " wheels"]
+
+
+def test_streaming_insert_waits_for_push_hotkey_release_before_paste(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+    hotkey_checks = []
+
+    def is_push_hotkey_active():
+        hotkey_checks.append(True)
+        return len(hotkey_checks) == 1
+
+    app.hotkey_service.is_push_hotkey_active = is_push_hotkey_active
+
+    app._enqueue_streaming_text("Late final text.")
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert len(hotkey_checks) == 2
+    assert inserter.last_text == "Late final text."
+
+
+def test_streaming_insert_adds_spaces_after_sentence_punctuation(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text(
+        "My name is Sim Shady.all the others seem she to just imitating."
+        "Will the real slim shady please stand up?"
+    )
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert inserter.last_text == (
+        "My name is Sim Shady. all the others seem she to just imitating. "
+        "Will the real slim shady please stand up?"
+    )
+
+
+def test_streaming_insert_repairs_latest_shady_sample(make_app, dependency_stubs):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text(
+        "My name is The Real Slim Shady. All you other slim shadies are just "
+        "simitating with the Real Slim Shady.Please stand up."
+    )
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert inserter.last_text == (
+        "My name is The Real Slim Shady. All you other slim shadies are just "
+        "simitating with the Real Slim Shady. Please stand up."
+    )
+
+
+def test_streaming_insert_repairs_multiple_sentence_joins(make_app, dependency_stubs):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text(
+        "My name is the real Slim Shady. All you other Slim Shadies are just "
+        "imitating.Well the real stream shady, please stand up.One, two, "
+        "three.Four, five, six."
+    )
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert inserter.last_text == (
+        "My name is the real Slim Shady. All you other Slim Shadies are just "
+        "imitating. Well the real stream shady, please stand up. One, two, "
+        "three. Four, five, six."
+    )
+
+
+def test_streaming_insert_repairs_lowercase_join_after_proper_name(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    inserter = dependency_stubs.last("text_inserter")
+
+    app._enqueue_streaming_text(
+        "My name is the real Slim Shady or other Slim Shady.are just "
+        "imitating.With a real slim shady, please stand up."
+    )
+    app.streaming_insert_queue.put(None)
+
+    app._streaming_insert_loop()
+
+    assert inserter.last_text == (
+        "My name is the real Slim Shady or other Slim Shady. are just "
+        "imitating. With a real slim shady, please stand up."
+    )
+
+
+def test_sentence_spacing_normalizer_preserves_single_letter_abbreviations():
+    assert push_to_talk.normalize_sentence_spacing("I live in the U.S.A.Today") == (
+        "I live in the U.S.A. Today"
+    )
+
+
+def test_sentence_spacing_normalizer_preserves_common_dotted_tokens():
+    text = "Visit example.com and edit config.py or self.value.Okay?"
+
+    assert push_to_talk.normalize_sentence_spacing(text) == (
+        "Visit example.com and edit config.py or self.value. Okay?"
+    )
+
+
 def test_parakeet_rest_recording_starts_auto_stop_timer(
     make_app, dependency_stubs, monkeypatch
 ):
@@ -556,6 +998,35 @@ def test_process_recorded_audio_pipeline(
     assert feedback_spy["start"] == 1
     assert feedback_spy["stop"] == 1
     assert not audio_path.exists()
+
+
+def test_process_recorded_audio_normalizes_sentence_spacing(
+    make_app,
+    dependency_stubs,
+    immediate_thread,
+    tmp_path,
+):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="openai",
+        openai_api_key="test-key",
+        enable_text_refinement=False,
+    )
+    app = make_app(config)
+
+    recorder = dependency_stubs.last("audio_recorder")
+    transcriber = dependency_stubs.last("transcriber")
+    inserter = dependency_stubs.last("text_inserter")
+
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    recorder.audio_file = str(audio_path)
+    transcriber.result = "One, two, three.Four, five, six."
+
+    app._on_start_recording()
+    app._on_stop_recording()
+    process_queue(app)
+
+    assert inserter.last_text == "One, two, three. Four, five, six."
 
 
 def test_process_recorded_audio_without_text(
@@ -873,6 +1344,7 @@ def test_config_requires_reinitialization_ignores_non_critical_fields():
     non_critical_changes = [
         ("enable_logging", False),
         ("enable_audio_feedback", False),
+        ("streaming_boundary_space_keypress", False),
     ]
 
     for field_name, new_value in non_critical_changes:

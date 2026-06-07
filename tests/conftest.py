@@ -131,6 +131,7 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
         config.enable_logging,
         config.enable_audio_feedback,
         config.debug_mode,
+        config.streaming_boundary_space_keypress,
     )
 
     gui.glossary_section = mock_gui_sections["glossary"](root, root, config.custom_glossary)

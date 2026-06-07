@@ -570,6 +570,16 @@ class HotkeyService:
         """
         return self.is_recording and self.is_toggle_mode
 
+    def is_push_hotkey_active(self) -> bool:
+        """
+        Check if the push-to-talk hotkey is physically held.
+
+        Returns:
+            True if the push-to-talk key combination is currently active.
+        """
+        with self._lock:
+            return self._push_hotkey_active and self._are_keys_active(self.hotkey_keys)
+
     def get_recording_mode(self) -> str:
         """
         Get the current recording mode.

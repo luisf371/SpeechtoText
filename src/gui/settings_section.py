@@ -39,6 +39,7 @@ class FeatureFlagsSection:
         self.enable_text_refinement_var = tk.BooleanVar()
         self.enable_logging_var = tk.BooleanVar()
         self.enable_audio_feedback_var = tk.BooleanVar()
+        self.streaming_boundary_space_keypress_var = tk.BooleanVar()
         self.debug_mode_var = tk.BooleanVar()
         self._refinement_switch: ctk.CTkSwitch | None = None
 
@@ -95,6 +96,11 @@ class FeatureFlagsSection:
         flags = [
             (self.enable_logging_var,       "Enable Logging",       "Write events to push_to_talk.log"),
             (self.enable_audio_feedback_var, "Audio Feedback", "Play a sound when recording starts and stops"),
+            (
+                self.streaming_boundary_space_keypress_var,
+                "Streaming Space Keypress",
+                "Press Space between streamed text chunks",
+            ),
             (self.debug_mode_var,            "Debug Mode",           "Save recorded audio files to debug directories"),
         ]
         for var, label, desc in flags:
@@ -107,13 +113,26 @@ class FeatureFlagsSection:
             "enable_text_refinement": self.enable_text_refinement_var.get(),
             "enable_logging": self.enable_logging_var.get(),
             "enable_audio_feedback": self.enable_audio_feedback_var.get(),
+            "streaming_boundary_space_keypress": (
+                self.streaming_boundary_space_keypress_var.get()
+            ),
             "debug_mode": self.debug_mode_var.get(),
         }
 
-    def set_values(self, enable_text_refinement, enable_logging, enable_audio_feedback, debug_mode):
+    def set_values(
+        self,
+        enable_text_refinement,
+        enable_logging,
+        enable_audio_feedback,
+        debug_mode,
+        streaming_boundary_space_keypress=True,
+    ):
         self.enable_text_refinement_var.set(enable_text_refinement)
         self.enable_logging_var.set(enable_logging)
         self.enable_audio_feedback_var.set(enable_audio_feedback)
+        self.streaming_boundary_space_keypress_var.set(
+            streaming_boundary_space_keypress
+        )
         self.debug_mode_var.set(debug_mode)
 
     def set_text_refinement_available(self, available: bool):

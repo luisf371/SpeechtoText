@@ -116,6 +116,7 @@ class ParakeetStreamingSession:
         self.error: Exception | None = None
         self._thread: threading.Thread | None = None
         self._send_lock = threading.Lock()
+        self._finish_lock = threading.Lock()
 
     @property
     def is_active(self) -> bool:
@@ -165,20 +166,21 @@ class ParakeetStreamingSession:
 
     def finish_recording(self) -> None:
         """Flush the final utterance while keeping the WebSocket connected."""
-        stop_started_at = time.monotonic()
-        self.inject_silence()
-        deadline = stop_started_at + self.drain_timeout
+        with self._finish_lock:
+            stop_started_at = time.monotonic()
+            self.inject_silence()
+            deadline = stop_started_at + self.drain_timeout
 
-        while time.monotonic() < deadline and not self._stop_event.is_set():
-            final_text_seen = self._last_text_time >= stop_started_at
-            quiet_after_final_text = (
-                final_text_seen
-                and time.monotonic() - self._last_text_time
-                >= PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS
-            )
-            if self._audio_queue.empty() and quiet_after_final_text:
-                break
-            time.sleep(0.05)
+            while time.monotonic() < deadline and not self._stop_event.is_set():
+                final_text_seen = self._last_text_time >= stop_started_at
+                quiet_after_final_text = (
+                    final_text_seen
+                    and time.monotonic() - self._last_text_time
+                    >= PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS
+                )
+                if self._audio_queue.empty() and quiet_after_final_text:
+                    break
+                time.sleep(0.05)
 
     def _run(self) -> None:
         sender = None
@@ -260,8 +262,9 @@ class ParakeetStreamingSession:
             logger.debug(f"Ignoring non-JSON Parakeet streaming message: {message!r}")
             return
 
-        text = str(payload.get("text", "")).strip()
-        if text:
+        text = str(payload.get("text", ""))
+        if text.strip():
+            logger.debug(f"Parakeet streaming text received: {text!r}")
             self._last_text_time = time.monotonic()
             self.on_text(text)
             return
@@ -275,6 +278,7 @@ class ParakeetStreamingSession:
         if not connection:
             return
         try:
-            connection.close()
+            with self._send_lock:
+                connection.close()
         except Exception as e:
             logger.debug(f"Error closing Parakeet streaming connection: {e}")

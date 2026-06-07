@@ -45,6 +45,18 @@ class TextInserter:
             logger.error(f"Text insertion failed: {e}")
             raise TextInsertionError(f"Failed to insert text: {e}") from e
 
+    def insert_space(self) -> bool:
+        """Insert a single literal space with the keyboard."""
+        try:
+            self.keyboard.press(keyboard.Key.space)
+            self.keyboard.release(keyboard.Key.space)
+            time.sleep(TEXT_INSERTION_DELAY_AFTER_PASTE_SECONDS)
+            logger.info("Space inserted via keyboard")
+            return True
+        except Exception as e:
+            logger.error(f"Space insertion failed: {e}")
+            raise TextInsertionError(f"Space insertion failed: {e}") from e
+
     def _insert_via_clipboard(self, text: str) -> bool:
         """Insert text by copying to clipboard and pasting."""
         original_clipboard = None
