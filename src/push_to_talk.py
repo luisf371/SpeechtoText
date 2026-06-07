@@ -39,9 +39,6 @@ from src.exceptions import (
     APIError,
 )
 
-STREAMING_INSERT_PTT_RELEASE_WAIT_SECONDS = 2.0
-
-
 def _get_default_hotkey() -> str:
     """Get platform-specific default hotkey."""
     return f"{'cmd' if sys.platform == 'darwin' else 'ctrl'}+space+^"
@@ -1121,31 +1118,6 @@ class PushToTalkApp:
         )
         return f"{separator}{segment}"
 
-    def _is_push_hotkey_active(self) -> bool:
-        """Return True while the configured push-to-talk hotkey is held."""
-        checker = getattr(self.hotkey_service, "is_push_hotkey_active", None)
-        if callable(checker):
-            try:
-                return bool(checker())
-            except Exception as e:
-                logger.debug(f"Could not read push-to-talk key state: {e}")
-
-        return bool(getattr(self.hotkey_service, "_push_hotkey_active", False))
-
-    def _wait_for_push_hotkey_release_before_insert(
-        self,
-        timeout: float = STREAMING_INSERT_PTT_RELEASE_WAIT_SECONDS,
-    ):
-        """Avoid synthetic paste/space keys while the PTT hotkey is still held."""
-        deadline = time.monotonic() + timeout
-        while self._is_push_hotkey_active():
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    "Timed out waiting for push-to-talk release before text insertion"
-                )
-                return
-            time.sleep(0.01)
-
     def _streaming_insert_loop(self):
         """Insert streaming text segments serially to avoid clipboard races."""
         while True:
@@ -1171,7 +1143,6 @@ class PushToTalkApp:
                         f"next_last_char={next_last_char!r}"
                     )
                     success = True
-                    self._wait_for_push_hotkey_release_before_insert()
                     if separator:
                         if self.config.streaming_boundary_space_keypress:
                             success = self.text_inserter.insert_space()

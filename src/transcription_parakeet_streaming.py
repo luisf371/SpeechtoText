@@ -169,7 +169,9 @@ class ParakeetStreamingSession:
         with self._finish_lock:
             stop_started_at = time.monotonic()
             self.inject_silence()
-            deadline = stop_started_at + self.drain_timeout
+            send_deadline = stop_started_at + self.drain_timeout
+            self._wait_for_audio_queue_drain(send_deadline)
+            deadline = time.monotonic() + self.drain_timeout
 
             while time.monotonic() < deadline and not self._stop_event.is_set():
                 final_text_seen = self._last_text_time >= stop_started_at
@@ -181,6 +183,18 @@ class ParakeetStreamingSession:
                 if self._audio_queue.empty() and quiet_after_final_text:
                     break
                 time.sleep(0.05)
+
+    def _wait_for_audio_queue_drain(self, deadline: float) -> None:
+        """Wait until queued stop-silence frames have been sent or time runs out."""
+        while time.monotonic() < deadline and not self._stop_event.is_set():
+            if getattr(self._audio_queue, "unfinished_tasks", 0) == 0:
+                return
+            time.sleep(0.01)
+
+        if getattr(self._audio_queue, "unfinished_tasks", 0):
+            logger.warning(
+                "Timed out waiting for Parakeet streaming audio queue to drain"
+            )
 
     def _run(self) -> None:
         sender = None
@@ -218,29 +232,32 @@ class ParakeetStreamingSession:
     def _send_loop(self) -> None:
         while not self._stop_event.is_set():
             chunk = self._audio_queue.get()
-            if chunk is None:
-                break
-            if not self._connected_event.wait(
-                timeout=PARAKEET_STREAMING_CONNECT_TIMEOUT_SECONDS
-            ):
-                logger.warning(
-                    "Timed out waiting for Parakeet WebSocket before sending audio"
-                )
-                break
-            connection = self._connection
-            if not connection:
-                break
             try:
-                with self._send_lock:
-                    connection.send(chunk)
-            except ConnectionClosed:
-                self._stop_event.set()
-                break
-            except Exception as e:
-                self.error = e
-                self._stop_event.set()
-                logger.error(f"Failed to send Parakeet streaming audio: {e}")
-                break
+                if chunk is None:
+                    break
+                if not self._connected_event.wait(
+                    timeout=PARAKEET_STREAMING_CONNECT_TIMEOUT_SECONDS
+                ):
+                    logger.warning(
+                        "Timed out waiting for Parakeet WebSocket before sending audio"
+                    )
+                    break
+                connection = self._connection
+                if not connection:
+                    break
+                try:
+                    with self._send_lock:
+                        connection.send(chunk)
+                except ConnectionClosed:
+                    self._stop_event.set()
+                    break
+                except Exception as e:
+                    self.error = e
+                    self._stop_event.set()
+                    logger.error(f"Failed to send Parakeet streaming audio: {e}")
+                    break
+            finally:
+                self._audio_queue.task_done()
 
     def _receive_loop(self, websocket) -> None:
         while not self._stop_event.is_set():

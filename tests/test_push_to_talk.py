@@ -1,5 +1,7 @@
 from collections import defaultdict
+import threading
 import sys
+import time
 import types
 
 import pytest
@@ -12,6 +14,7 @@ sys.modules.setdefault("mouseinfo", types.SimpleNamespace())
 sys.modules.setdefault("pyautogui", pyautogui_stub)
 
 from src import push_to_talk  # noqa: E402
+from src import transcription_parakeet_streaming as streaming  # noqa: E402
 
 
 class InstanceTracker(defaultdict):
@@ -345,6 +348,58 @@ def test_parakeet_streaming_options_are_added_to_ws_url():
         "vad_max_chunk_seconds=3.0&transcription_batch_size=1&"
         "transcription_batch_window_ms=0"
     )
+
+
+def test_parakeet_streaming_sender_marks_audio_chunks_done():
+    sent_chunks = []
+
+    class StubConnection:
+        def send(self, chunk):
+            sent_chunks.append(chunk)
+
+    session = streaming.ParakeetStreamingSession(
+        "http://localhost:8000", lambda text: None
+    )
+    session._connection = StubConnection()
+    session._connected_event.set()
+    session._audio_queue.put(b"audio")
+    session._audio_queue.put(None)
+
+    session._send_loop()
+
+    assert sent_chunks == [b"audio"]
+    assert session._audio_queue.unfinished_tasks == 0
+
+
+def test_parakeet_streaming_finish_waits_for_stop_silence_to_send(monkeypatch):
+    monkeypatch.setattr(
+        streaming, "PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS", 0.01
+    )
+    session = streaming.ParakeetStreamingSession(
+        "http://localhost:8000",
+        lambda text: None,
+        drain_timeout=0.25,
+    )
+
+    def inject_pending_silence():
+        session._audio_queue.put(b"pending-silence")
+
+    def drain_pending_silence():
+        time.sleep(0.05)
+        session._audio_queue.get_nowait()
+        session._audio_queue.task_done()
+        session._last_text_time = time.monotonic()
+
+    session.inject_silence = inject_pending_silence
+    drain_thread = threading.Thread(target=drain_pending_silence)
+    started_at = time.monotonic()
+
+    drain_thread.start()
+    session.finish_recording()
+    drain_thread.join(timeout=1.0)
+
+    assert time.monotonic() - started_at >= 0.05
+    assert session._audio_queue.unfinished_tasks == 0
 
 
 def test_start_prewarms_parakeet_streaming_session(
@@ -754,25 +809,18 @@ def test_streaming_insert_can_paste_boundary_space_with_chunk(
     assert inserter.inserted_texts == ["The", " wheels"]
 
 
-def test_streaming_insert_waits_for_push_hotkey_release_before_paste(
+def test_streaming_insert_does_not_wait_for_push_hotkey_release_before_paste(
     make_app, dependency_stubs
 ):
     app = make_app()
     inserter = dependency_stubs.last("text_inserter")
-    hotkey_checks = []
-
-    def is_push_hotkey_active():
-        hotkey_checks.append(True)
-        return len(hotkey_checks) == 1
-
-    app.hotkey_service.is_push_hotkey_active = is_push_hotkey_active
+    app.hotkey_service.is_push_hotkey_active = lambda: True
 
     app._enqueue_streaming_text("Late final text.")
     app.streaming_insert_queue.put(None)
 
     app._streaming_insert_loop()
 
-    assert len(hotkey_checks) == 2
     assert inserter.last_text == "Late final text."
 
 
