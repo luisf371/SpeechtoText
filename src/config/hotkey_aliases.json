@@ -1,4 +1,18 @@
 {
+  "-": [
+    "-",
+    "minus",
+    "hyphen",
+    "dash",
+    "subtract",
+    "kp_subtract"
+  ],
+  "=": [
+    "=",
+    "equal",
+    "equals",
+    "kp_equal"
+  ],
   "alt": [
     "alt",
     "option",
@@ -84,12 +98,14 @@
   "page_down": [
     "page_down",
     "page down",
+    "next",
     "pgdn",
     "pgdown"
   ],
   "page_up": [
     "page_up",
     "page up",
+    "prior",
     "pgup"
   ],
   "pause": [

@@ -41,9 +41,12 @@ class TextInserter:
         with self._insert_lock:
             try:
                 return self._insert_via_clipboard(text)
-            except TextInsertionError:
-                # Re-raise TextInsertionError as-is
-                raise
+            except TextInsertionError as clipboard_error:
+                logger.warning(
+                    f"Clipboard insertion unavailable; falling back to direct typing: "
+                    f"{clipboard_error}"
+                )
+                return self._insert_directly(text)
             except Exception as e:
                 logger.error(f"Text insertion failed: {e}")
                 raise TextInsertionError(f"Failed to insert text: {e}") from e
@@ -61,13 +64,23 @@ class TextInserter:
 
         with self._insert_lock:
             self._insert_space_unlocked()
-            return self._insert_via_clipboard(text)
+            try:
+                return self._insert_via_clipboard(text)
+            except TextInsertionError as clipboard_error:
+                logger.warning(
+                    f"Clipboard insertion unavailable; falling back to direct typing: "
+                    f"{clipboard_error}"
+                )
+                return self._insert_directly(text)
 
     def _insert_space_unlocked(self) -> bool:
         """Insert a single literal space; caller must hold the insertion lock."""
         try:
-            self.keyboard.press(keyboard.Key.space)
-            self.keyboard.release(keyboard.Key.space)
+            from src.hotkey_service import suppress_hotkey_events
+
+            with suppress_hotkey_events():
+                self.keyboard.press(keyboard.Key.space)
+                self.keyboard.release(keyboard.Key.space)
             time.sleep(TEXT_INSERTION_DELAY_AFTER_PASTE_SECONDS)
             logger.info("Space inserted via keyboard")
             return True
@@ -89,10 +102,13 @@ class TextInserter:
                 keyboard.Key.cmd if sys.platform == "darwin" else keyboard.Key.ctrl
             )
 
+            from src.hotkey_service import suppress_hotkey_events
+
             # Press modifier+v to paste
-            with self.keyboard.pressed(modifier_key):
-                self.keyboard.press("v")
-                self.keyboard.release("v")
+            with suppress_hotkey_events():
+                with self.keyboard.pressed(modifier_key):
+                    self.keyboard.press("v")
+                    self.keyboard.release("v")
 
             time.sleep(TEXT_INSERTION_DELAY_AFTER_PASTE_SECONDS)
 
@@ -104,10 +120,41 @@ class TextInserter:
             raise TextInsertionError(f"Clipboard insertion failed: {e}") from e
         finally:
             if original_clipboard is not None:
-                try:
-                    pyperclip.copy(original_clipboard)
-                except Exception:
-                    pass
+                self._restore_clipboard(original_clipboard)
+
+    def _restore_clipboard(self, original_clipboard: str) -> None:
+        if sys.platform.startswith("linux"):
+            logger.debug("Leaving inserted text on Linux clipboard after paste")
+            return
+
+        self._copy_clipboard_for_restore(original_clipboard)
+
+    def _copy_clipboard_for_restore(self, text: str) -> None:
+        try:
+            pyperclip.copy(text)
+        except Exception as e:
+            logger.debug(f"Could not restore previous clipboard contents: {e}")
+
+    def _insert_directly(self, text: str) -> bool:
+        """Insert text by typing it directly through pynput."""
+        try:
+            from src.hotkey_service import suppress_hotkey_events
+
+            with suppress_hotkey_events():
+                if hasattr(self.keyboard, "type"):
+                    self.keyboard.type(text)
+                else:  # pragma: no cover - compatibility fallback for unusual controllers
+                    for char in text:
+                        self.keyboard.press(char)
+                        self.keyboard.release(char)
+                        time.sleep(self.insertion_delay)
+
+            time.sleep(TEXT_INSERTION_DELAY_AFTER_PASTE_SECONDS)
+            logger.info(f"Text inserted via direct typing: {len(text)} characters")
+            return True
+        except Exception as e:
+            logger.error(f"Direct text insertion failed: {e}")
+            raise TextInsertionError(f"Direct text insertion failed: {e}") from e
 
     def _get_clipboard_text(self) -> Optional[str]:
         """Get current clipboard text content."""

@@ -1,8 +1,9 @@
 import os
+import threading
 import wave
 from loguru import logger
 from pathlib import Path
-from playsound3 import playsound
+import pyaudio
 
 from src.config.constants import AUDIO_DURATION_MIN_THRESHOLD_SECONDS
 
@@ -16,25 +17,67 @@ _STOP_SOUND_PATH = _ASSETS_DIR / "stop_feedback.wav"
 def play_start_feedback():
     """Play a high-pitched beep for recording start."""
 
-    try:
-        if _START_SOUND_PATH.exists():
-            playsound(str(_START_SOUND_PATH), block=False)
-        else:
-            logger.warning(f"Start feedback audio file not found: {_START_SOUND_PATH}")
-    except Exception as e:
-        logger.error(f"Failed to play start feedback sound: {e}")
+    _play_feedback_sound(_START_SOUND_PATH, "start")
 
 
 def play_stop_feedback():
     """Play a lower-pitched confirmation beep for recording stop."""
 
+    _play_feedback_sound(_STOP_SOUND_PATH, "stop")
+
+
+def _play_feedback_sound(sound_path: Path, sound_name: str):
+    if not sound_path.exists():
+        logger.warning(f"{sound_name.title()} feedback audio file not found: {sound_path}")
+        return
+
+    thread = threading.Thread(
+        target=_play_wav_feedback,
+        args=(sound_path, sound_name),
+        name=f"{sound_name.title()}FeedbackSound",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _play_wav_feedback(sound_path: Path, sound_name: str):
+    audio = None
+    stream = None
     try:
-        if _STOP_SOUND_PATH.exists():
-            playsound(str(_STOP_SOUND_PATH), block=False)
-        else:
-            logger.warning(f"Stop feedback audio file not found: {_STOP_SOUND_PATH}")
+        from src.audio_recorder import _suppress_native_stderr
+
+        with wave.open(str(sound_path), "rb") as wav_file:
+            with _suppress_native_stderr():
+                audio = pyaudio.PyAudio()
+                stream = audio.open(
+                    format=audio.get_format_from_width(wav_file.getsampwidth()),
+                    channels=wav_file.getnchannels(),
+                    rate=wav_file.getframerate(),
+                    output=True,
+                )
+
+            data = wav_file.readframes(1024)
+            while data:
+                stream.write(data)
+                data = wav_file.readframes(1024)
     except Exception as e:
-        logger.error(f"Failed to play stop feedback sound: {e}")
+        logger.error(f"Failed to play {sound_name} feedback sound: {e}")
+    finally:
+        if stream:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception as cleanup_error:
+                logger.debug(
+                    f"Error cleaning up {sound_name} feedback stream: {cleanup_error}"
+                )
+        if audio:
+            try:
+                audio.terminate()
+            except Exception as cleanup_error:
+                logger.debug(
+                    f"Error terminating {sound_name} feedback audio: {cleanup_error}"
+                )
 
 
 def validate_audio_file_exists(file_path: str) -> bool:

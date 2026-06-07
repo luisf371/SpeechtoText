@@ -23,9 +23,17 @@ PARAKEET_STREAMING_DRAIN_TIMEOUT_SECONDS = 5.0
 PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS = 0.75
 PARAKEET_STREAMING_CONNECT_TIMEOUT_SECONDS = 10.0
 PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS = 250
+PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS = 50
+PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS = 5000
 PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS = 8.0
+PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS = 0.5
+PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS = 120.0
 PARAKEET_STREAMING_DEFAULT_BATCH_SIZE = 4
-PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS = 15
+PARAKEET_STREAMING_MIN_BATCH_SIZE = 1
+PARAKEET_STREAMING_MAX_BATCH_SIZE = 64
+PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS = 15.0
+PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS = 0.0
+PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS = 1000.0
 
 
 def build_parakeet_ws_url(
@@ -34,7 +42,7 @@ def build_parakeet_ws_url(
     vad_end_silence_ms: int | None = None,
     vad_max_chunk_seconds: float | None = None,
     transcription_batch_size: int | None = None,
-    transcription_batch_window_ms: int | None = None,
+    transcription_batch_window_ms: float | None = None,
 ) -> str:
     """Normalize a Parakeet HTTP or WebSocket endpoint to the native /ws route."""
     normalized = (endpoint or "").strip().rstrip("/")
@@ -97,7 +105,7 @@ class ParakeetStreamingSession:
         vad_end_silence_ms: int | None = None,
         vad_max_chunk_seconds: float | None = None,
         transcription_batch_size: int | None = None,
-        transcription_batch_window_ms: int | None = None,
+        transcription_batch_window_ms: float | None = None,
     ):
         self.ws_url = build_parakeet_ws_url(
             endpoint,

@@ -114,7 +114,7 @@ class GlossarySection:
             font=("Segoe UI", 13), fg_color=C_INPUT,
             border_color=C_BORDER, text_color=C_TEXT, height=33, corner_radius=7,
         ).pack(fill="x")
-        self.glossary_search_var.trace("w", self._filter_glossary_list)
+        self.glossary_search_var.trace_add("write", self._filter_glossary_list)
 
         # Listbox (tk.Listbox with dark colors — CTk has no native listbox)
         lb_frame = ctk.CTkFrame(f, fg_color=C_INPUT, corner_radius=7, border_width=1,

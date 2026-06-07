@@ -88,3 +88,7 @@ Append-only lessons learned log. Newest notes go at the bottom. Keep entries bri
 - Config writes use src/config/file_io.py::write_json_atomic() (NamedTemporaryFile in target dir + os.replace) to avoid partially written JSON during async saves.
 
 - Removed stale tracked coverage.xml and added it to .gitignore; regenerate coverage locally instead of relying on a checked-in report that can drift from src/. README provider/config docs now include Parakeet, custom STT/refinement endpoints, streaming knobs, and current hotkey defaults.
+
+- Parakeet streaming tuning GUI limits should stay in sync with `src/transcription_parakeet_streaming.py` min/max/default constants; `APISection.get_values()` clamps spinboxes before config construction so typed values are capped even if focus has not left the field.
+
+- For Parakeet streaming tuning UI, prefer native `tk.Spinbox` inside the CTk input shell when users expect built-in up/down arrows; lay the four controls out as 2x2 cells so labels and help icons do not crowd each other.

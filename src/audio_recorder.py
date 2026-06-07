@@ -2,10 +2,59 @@ import pyaudio
 import wave
 import threading
 import tempfile
+import os
+import sys
+from contextlib import contextmanager
 from typing import Callable, Optional
 from loguru import logger
 
 from src.config.constants import AUDIO_RECORDING_THREAD_TIMEOUT_SECONDS
+
+
+_NATIVE_STDERR_LOCK = threading.Lock()
+
+
+def _show_audio_backend_warnings() -> bool:
+    return os.environ.get("PUSH_TO_TALK_SHOW_AUDIO_BACKEND_WARNINGS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+@contextmanager
+def _suppress_native_stderr():
+    """Temporarily silence C libraries that write directly to stderr."""
+    if _show_audio_backend_warnings():
+        yield
+        return
+
+    try:
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        yield
+        return
+
+    with _NATIVE_STDERR_LOCK:
+        saved_fd = None
+        devnull_fd = None
+        try:
+            saved_fd = os.dup(stderr_fd)
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, stderr_fd)
+            yield
+        finally:
+            if saved_fd is not None:
+                try:
+                    os.dup2(saved_fd, stderr_fd)
+                except OSError:
+                    pass
+            for fd in (devnull_fd, saved_fd):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
 
 
 class AudioRecorder:
@@ -50,7 +99,8 @@ class AudioRecorder:
     def _initialize_audio_interface(self):
         """Initialize PyAudio interface in background."""
         try:
-            self.audio_interface = pyaudio.PyAudio()
+            with _suppress_native_stderr():
+                self.audio_interface = pyaudio.PyAudio()
             logger.debug("PyAudio initialized successfully in background")
         except Exception as e:
             self._init_error = e
@@ -85,13 +135,14 @@ class AudioRecorder:
                     return False
 
             try:
-                self.stream = self.audio_interface.open(
-                    format=self.audio_format,
-                    channels=self.channels,
-                    rate=self.sample_rate,
-                    input=True,
-                    frames_per_buffer=self.chunk_size,
-                )
+                with _suppress_native_stderr():
+                    self.stream = self.audio_interface.open(
+                        format=self.audio_format,
+                        channels=self.channels,
+                        rate=self.sample_rate,
+                        input=True,
+                        frames_per_buffer=self.chunk_size,
+                    )
 
                 self.is_recording = True
                 self.audio_data = []

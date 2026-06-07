@@ -4,14 +4,19 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.hotkey_service import HotkeyService  # noqa: E402
-from src.exceptions import HotkeyError
-from tests.test_helpers import create_keyboard_stub
+from tests.test_helpers import DummyKey, create_keyboard_stub
 
 # Setup keyboard stub for pynput imports
 keyboard_stub = create_keyboard_stub()
 sys.modules.setdefault("pynput", types.SimpleNamespace(keyboard=keyboard_stub))
 sys.modules["pynput.keyboard"] = keyboard_stub
+
+from src.hotkey_service import (  # noqa: E402
+    HotkeyService,
+    _reset_hotkey_event_suppression_for_tests,
+    suppress_hotkey_events,
+)
+from src.exceptions import HotkeyError
 
 
 # Aliases for backward compatibility in tests
@@ -22,6 +27,7 @@ Key = keyboard_stub.Key
 class TestHotkeyService:
     def setup_method(self):
         """Initialize a hotkey service instance for each test."""
+        _reset_hotkey_event_suppression_for_tests()
 
         # Use explicit hotkeys for deterministic tests
         self.service = HotkeyService(
@@ -33,6 +39,7 @@ class TestHotkeyService:
 
         if getattr(self.service, "is_running", False):
             self.service.stop_service()
+        _reset_hotkey_event_suppression_for_tests()
 
     def test_initialization(self):
         """Verify that initialization populates expected defaults."""
@@ -313,6 +320,34 @@ class TestHotkeyServiceKeyNormalization:
         normalized = self.service._normalize_key_name("page down")
         assert normalized is not None
 
+    def test_normalize_runtime_punctuation_aliases(self):
+        """Named punctuation keys should match literal configured hotkeys."""
+        assert self.service._normalize_key_name("minus") == "-"
+        assert self.service._normalize_key_name("equal") == "="
+
+    def test_normalize_tk_page_aliases(self):
+        """Tk PageUp/PageDown names should match pynput canonical names."""
+        assert self.service._normalize_key_name("next") == "page_down"
+        assert self.service._normalize_key_name("prior") == "page_up"
+
+    def test_single_punctuation_hotkey_matches_named_runtime_key(self):
+        """A literal punctuation config should trigger on named key events."""
+        service = HotkeyService(hotkey="-", toggle_hotkey="=")
+        start_cb = MagicMock()
+        stop_cb = MagicMock()
+        service.set_callbacks(start_cb, stop_cb)
+        service.is_running = True
+
+        service._on_key_press(DummyKey("minus"))
+
+        assert service.is_recording is True
+        start_cb.assert_called_once()
+
+        service._on_key_release(DummyKey("minus"))
+
+        assert service.is_recording is False
+        stop_cb.assert_called_once()
+
     def test_key_to_name_handles_key_object(self):
         """_key_to_name should handle pynput Key objects."""
         key = pynput_keyboard.Key.ctrl
@@ -364,6 +399,7 @@ class TestHotkeyServiceKeyNormalization:
 class TestHotkeyServiceEdgeCases:
     def setup_method(self):
         """Initialize a hotkey service instance for each test."""
+        _reset_hotkey_event_suppression_for_tests()
         self.service = HotkeyService(
             hotkey="ctrl+shift+space", toggle_hotkey="ctrl+shift+t"
         )
@@ -372,6 +408,7 @@ class TestHotkeyServiceEdgeCases:
         """Ensure the service is stopped after each test."""
         if getattr(self.service, "is_running", False):
             self.service.stop_service()
+        _reset_hotkey_event_suppression_for_tests()
 
     def test_parse_hotkey_with_empty_parts(self):
         """Parsing hotkey with empty parts should handle gracefully."""
@@ -431,6 +468,23 @@ class TestHotkeyServiceEdgeCases:
         # Should not raise or change state
         self.service._on_key_press(pynput_keyboard.Key.ctrl)
         assert len(self.service.current_keys) == 0
+
+    def test_on_key_press_ignored_while_hotkeys_suppressed(self):
+        """Synthetic insertion keystrokes should not trigger hotkeys."""
+        start_cb = MagicMock()
+        stop_cb = MagicMock()
+        service = HotkeyService(hotkey="-", toggle_hotkey="=")
+        service.set_callbacks(start_cb, stop_cb)
+        service.is_running = True
+
+        with suppress_hotkey_events():
+            service._on_key_press(DummyKey("minus"))
+            service._on_key_release(DummyKey("minus"))
+
+        assert service.is_recording is False
+        assert service.current_keys == set()
+        start_cb.assert_not_called()
+        stop_cb.assert_not_called()
 
     def test_on_key_release_when_not_running(self):
         """_on_key_release should do nothing when service not running."""

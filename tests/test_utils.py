@@ -21,13 +21,16 @@ def test_play_start_feedback_plays_audio(tmp_path, monkeypatch, mock_logger):
     audio_path = tmp_path / "start.wav"
     audio_path.write_bytes(b"data")
 
-    playsound = MagicMock()
+    thread = MagicMock()
     monkeypatch.setattr(utils, "_START_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils, "playsound", playsound)
+    monkeypatch.setattr(utils.threading, "Thread", thread)
 
     utils.play_start_feedback()
 
-    playsound.assert_called_once_with(str(audio_path), block=False)
+    thread.assert_called_once()
+    assert thread.call_args.kwargs["target"] == utils._play_wav_feedback
+    assert thread.call_args.kwargs["args"] == (audio_path, "start")
+    thread.return_value.start.assert_called_once()
     mock_logger.warning.assert_not_called()
 
 
@@ -35,51 +38,66 @@ def test_play_start_feedback_missing_file_warns(monkeypatch, mock_logger):
     """A missing audio file should emit a warning and not play anything."""
 
     missing_path = Path("/does/not/exist/start.wav")
-    playsound = MagicMock()
+    thread = MagicMock()
 
     monkeypatch.setattr(utils, "_START_SOUND_PATH", missing_path)
-    monkeypatch.setattr(utils, "playsound", playsound)
+    monkeypatch.setattr(utils.threading, "Thread", thread)
 
     utils.play_start_feedback()
 
-    playsound.assert_not_called()
+    thread.assert_not_called()
     mock_logger.warning.assert_called_once()
 
 
-def test_play_stop_feedback_logs_error_on_failure(tmp_path, monkeypatch, mock_logger):
-    """Exceptions raised while playing stop feedback should be logged as errors."""
+def test_play_wav_feedback_logs_error_on_failure(tmp_path, monkeypatch, mock_logger):
+    """Exceptions raised while playing feedback should be logged as errors."""
 
     audio_path = tmp_path / "stop.wav"
     audio_path.write_bytes(b"data")
 
-    def failing_playsound(*_, **__):
+    def failing_wave_open(*_, **__):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(utils, "_STOP_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils, "playsound", failing_playsound)
+    monkeypatch.setattr(utils.wave, "open", failing_wave_open)
 
-    utils.play_stop_feedback()
+    utils._play_wav_feedback(audio_path, "stop")
 
     mock_logger.error.assert_called_once()
 
 
-def test_play_start_feedback_logs_error_on_exception(
-    tmp_path, monkeypatch, mock_logger
-):
-    """Exceptions raised while playing start feedback should be logged as errors."""
+def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger):
+    """Feedback playback should stream WAV frames through PyAudio."""
 
     audio_path = tmp_path / "start.wav"
     audio_path.write_bytes(b"data")
 
-    def failing_playsound(*_, **__):
-        raise RuntimeError("boom")
+    wav_file = MagicMock()
+    wav_file.__enter__.return_value = wav_file
+    wav_file.getsampwidth.return_value = 2
+    wav_file.getnchannels.return_value = 1
+    wav_file.getframerate.return_value = 16000
+    wav_file.readframes.side_effect = [b"chunk", b""]
 
-    monkeypatch.setattr(utils, "_START_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils, "playsound", failing_playsound)
+    audio = MagicMock()
+    audio.get_format_from_width.return_value = "format"
+    stream = audio.open.return_value
 
-    utils.play_start_feedback()
+    monkeypatch.setattr(utils.wave, "open", MagicMock(return_value=wav_file))
+    monkeypatch.setattr(utils.pyaudio, "PyAudio", MagicMock(return_value=audio))
 
-    mock_logger.error.assert_called_once()
+    utils._play_wav_feedback(audio_path, "start")
+
+    audio.open.assert_called_once_with(
+        format="format",
+        channels=1,
+        rate=16000,
+        output=True,
+    )
+    stream.write.assert_called_once_with(b"chunk")
+    stream.stop_stream.assert_called_once()
+    stream.close.assert_called_once()
+    audio.terminate.assert_called_once()
+    mock_logger.error.assert_not_called()
 
 
 def test_play_stop_feedback_plays_audio(tmp_path, monkeypatch, mock_logger):
@@ -88,13 +106,16 @@ def test_play_stop_feedback_plays_audio(tmp_path, monkeypatch, mock_logger):
     audio_path = tmp_path / "stop.wav"
     audio_path.write_bytes(b"data")
 
-    playsound = MagicMock()
+    thread = MagicMock()
     monkeypatch.setattr(utils, "_STOP_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils, "playsound", playsound)
+    monkeypatch.setattr(utils.threading, "Thread", thread)
 
     utils.play_stop_feedback()
 
-    playsound.assert_called_once_with(str(audio_path), block=False)
+    thread.assert_called_once()
+    assert thread.call_args.kwargs["target"] == utils._play_wav_feedback
+    assert thread.call_args.kwargs["args"] == (audio_path, "stop")
+    thread.return_value.start.assert_called_once()
     mock_logger.warning.assert_not_called()
 
 
@@ -102,14 +123,14 @@ def test_play_stop_feedback_missing_file_warns(monkeypatch, mock_logger):
     """A missing audio file for stop feedback should emit a warning."""
 
     missing_path = Path("/does/not/exist/stop.wav")
-    playsound = MagicMock()
+    thread = MagicMock()
 
     monkeypatch.setattr(utils, "_STOP_SOUND_PATH", missing_path)
-    monkeypatch.setattr(utils, "playsound", playsound)
+    monkeypatch.setattr(utils.threading, "Thread", thread)
 
     utils.play_stop_feedback()
 
-    playsound.assert_not_called()
+    thread.assert_not_called()
     mock_logger.warning.assert_called_once()
 
 

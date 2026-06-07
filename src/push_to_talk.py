@@ -5,7 +5,7 @@ from loguru import logger
 import threading
 import signal
 import queue
-from typing import Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any
 import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
@@ -24,6 +24,14 @@ from src.transcription_parakeet_streaming import (
     PARAKEET_STREAMING_FRAME_BYTES,
     PARAKEET_STREAMING_FRAME_SAMPLES,
     PARAKEET_STREAMING_SAMPLE_RATE,
+    PARAKEET_STREAMING_MAX_BATCH_SIZE,
+    PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS,
+    PARAKEET_STREAMING_MIN_BATCH_SIZE,
+    PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS,
     ParakeetStreamingSession,
     build_parakeet_ws_url,
 )
@@ -104,22 +112,26 @@ class PushToTalkConfig(BaseModel):
     )
     parakeet_streaming_vad_end_silence_ms: int = Field(
         default=PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
-        gt=0,
+        ge=PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS,
+        le=PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS,
         description="Parakeet WebSocket VAD trailing silence threshold in milliseconds",
     )
     parakeet_streaming_max_chunk_seconds: float = Field(
         default=PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
-        gt=0,
+        ge=PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS,
+        le=PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS,
         description="Parakeet WebSocket maximum VAD chunk duration in seconds",
     )
     parakeet_streaming_batch_size: int = Field(
         default=PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
-        gt=0,
+        ge=PARAKEET_STREAMING_MIN_BATCH_SIZE,
+        le=PARAKEET_STREAMING_MAX_BATCH_SIZE,
         description="Parakeet WebSocket transcription micro-batch size",
     )
-    parakeet_streaming_batch_window_ms: int = Field(
+    parakeet_streaming_batch_window_ms: float = Field(
         default=PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
-        ge=0,
+        ge=PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS,
+        le=PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS,
         description="Parakeet WebSocket transcription micro-batch gather window in milliseconds",
     )
     parakeet_rest_auto_stop_seconds: float = Field(
@@ -284,6 +296,7 @@ class PushToTalkApp:
         text_refiner: Optional[TextRefinerBase] = None,
         text_inserter: Optional[TextInserter] = None,
         hotkey_service: Optional[HotkeyService] = None,
+        recording_state_callback: Optional[Callable[[str], None]] = None,
     ):
         """
         Initialize the PushToTalk application.
@@ -341,6 +354,7 @@ class PushToTalkApp:
         self.text_refiner = text_refiner
         self.text_inserter = text_inserter
         self.hotkey_service = hotkey_service
+        self.recording_state_callback = recording_state_callback
 
         # Track which components were injected (to preserve them during reinitialization)
         self._injected_audio_recorder = audio_recorder is not None
@@ -351,6 +365,7 @@ class PushToTalkApp:
 
         # State management
         self.is_running = False
+        self.recording_mode = "idle"
 
         # Command queue for handling hotkey events
         self.command_queue = queue.Queue()
@@ -744,6 +759,7 @@ class PushToTalkApp:
             self.audio_recorder.shutdown()
 
         # No cleanup needed for audio feedback utility functions
+        self._set_recording_mode("idle")
 
         logger.info("PushToTalk application stopped")
 
@@ -773,16 +789,20 @@ class PushToTalkApp:
             command = None
             try:
                 command = self.command_queue.get(timeout=0.5)
-                if command == "QUIT":
+                command_name = command[0] if isinstance(command, tuple) else command
+                command_payload = command[1:] if isinstance(command, tuple) else ()
+
+                if command_name == "QUIT":
                     break
-                elif command == "START_RECORDING":
-                    self._do_start_recording()
-                elif command == "STOP_RECORDING":
+                elif command_name == "START_RECORDING":
+                    mode = command_payload[0] if command_payload else "push-to-talk"
+                    self._do_start_recording(mode)
+                elif command_name == "STOP_RECORDING":
                     self._do_stop_recording()
-                elif command == "AUTO_STOP_RECORDING":
+                elif command_name == "AUTO_STOP_RECORDING":
                     self._do_stop_recording(auto_stop=True)
                 else:
-                    logger.warning(f"Unknown command received: {command}")
+                    logger.warning(f"Unknown command received: {command_name}")
             except queue.Empty:
                 if not self.is_running:
                     break
@@ -795,14 +815,16 @@ class PushToTalkApp:
     def _on_start_recording(self):
         """Callback for when recording starts (called from hotkey thread)."""
         # Push command to queue to avoid blocking hotkey listener
-        self.command_queue.put("START_RECORDING")
+        self.command_queue.put(
+            ("START_RECORDING", self._current_hotkey_recording_mode())
+        )
 
     def _on_stop_recording(self):
         """Callback for when recording stops (called from hotkey thread)."""
         # Push command to queue to avoid blocking hotkey listener
         self.command_queue.put("STOP_RECORDING")
 
-    def _do_start_recording(self):
+    def _do_start_recording(self, mode: str = "push-to-talk"):
         """Internal method to perform start recording actions."""
         if getattr(self.audio_recorder, "is_recording", False):
             logger.debug("Ignoring start command; recording is already active")
@@ -815,12 +837,17 @@ class PushToTalkApp:
         if self.config.is_parakeet_streaming_active():
             if not self._start_parakeet_streaming_recording():
                 logger.error("Failed to start Parakeet streaming recording")
+                self._set_recording_mode("idle")
+            else:
+                self._set_recording_mode(mode)
             return
 
         if self.audio_recorder.start_recording():
+            self._set_recording_mode(mode)
             self._start_rest_auto_stop_timer()
         else:
             logger.error("Failed to start audio recording")
+            self._set_recording_mode("idle")
 
     def _do_stop_recording(self, auto_stop: bool = False):
         """Internal method to perform stop recording actions."""
@@ -833,10 +860,6 @@ class PushToTalkApp:
                     "Ignoring stop command; no Parakeet streaming recording is active"
                 )
             return
-
-        # Play audio feedback immediately when hotkey is released
-        if self.config.enable_audio_feedback:
-            play_stop_feedback()
 
         if self.config.is_parakeet_streaming_active():
             self._stop_parakeet_streaming_recording()
@@ -852,6 +875,12 @@ class PushToTalkApp:
 
         # Stop recording and get audio file (fast operation)
         audio_file = self.audio_recorder.stop_recording()
+        self._set_recording_mode("idle")
+
+        # Play feedback after releasing the input stream. Some Linux audio stacks
+        # cannot open playback while PyAudio still owns the capture device.
+        if self.config.enable_audio_feedback:
+            play_stop_feedback()
 
         if not audio_file:
             logger.warning("No audio file to process")
@@ -909,6 +938,32 @@ class PushToTalkApp:
         """Queue a graceful stop when a Parakeet REST recording reaches its limit."""
         self.command_queue.put("AUTO_STOP_RECORDING")
 
+    def set_recording_state_callback(
+        self, callback: Optional[Callable[[str], None]]
+    ) -> None:
+        """Set a callback that receives idle, push-to-talk, or toggle."""
+        self.recording_state_callback = callback
+
+    def _current_hotkey_recording_mode(self) -> str:
+        try:
+            if self.hotkey_service and self.hotkey_service.is_toggle_recording():
+                return "toggle"
+        except Exception:
+            pass
+        return "push-to-talk"
+
+    def _set_recording_mode(self, mode: str) -> None:
+        if mode not in {"idle", "push-to-talk", "toggle"}:
+            mode = "idle"
+        if self.recording_mode == mode:
+            return
+        self.recording_mode = mode
+        if self.recording_state_callback:
+            try:
+                self.recording_state_callback(mode)
+            except Exception as error:
+                logger.error(f"Recording state callback failed: {error}")
+
     def _mark_hotkey_recording_stopped(self):
         """Keep hotkey state consistent after a timer-driven stop."""
         if hasattr(self.hotkey_service, "is_recording"):
@@ -947,6 +1002,11 @@ class PushToTalkApp:
     def _stop_parakeet_streaming_recording(self):
         """Stop live Parakeet streaming and skip REST transcription/refinement."""
         audio_file = self.audio_recorder.stop_recording()
+
+        if self.config.enable_audio_feedback:
+            play_stop_feedback()
+
+        self._set_recording_mode("idle")
 
         self._flush_streaming_frame_buffer()
         self._finish_streaming_recording()

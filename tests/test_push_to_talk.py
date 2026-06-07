@@ -3,15 +3,20 @@ import threading
 import sys
 import time
 import types
+from unittest.mock import MagicMock
 
 import pytest
 
-from tests.test_helpers import create_pyautogui_stub
+from tests.test_helpers import create_keyboard_stub, create_pyautogui_stub
 
-# Setup pyautogui stub for imports
+# Setup GUI and keyboard stubs for imports
 pyautogui_stub = create_pyautogui_stub()
+keyboard_stub = create_keyboard_stub()
+keyboard_stub.Controller = MagicMock
 sys.modules.setdefault("mouseinfo", types.SimpleNamespace())
 sys.modules.setdefault("pyautogui", pyautogui_stub)
+sys.modules.setdefault("pynput", types.SimpleNamespace(keyboard=keyboard_stub))
+sys.modules["pynput.keyboard"] = keyboard_stub
 
 from src import push_to_talk  # noqa: E402
 from src import transcription_parakeet_streaming as streaming  # noqa: E402
@@ -152,6 +157,9 @@ def dependency_stubs(monkeypatch):
         def is_service_running(self):
             return self.is_running
 
+        def is_toggle_recording(self):
+            return False
+
     class StubTranscriberFactory:
         @staticmethod
         def create_transcriber(provider, api_key, model, glossary=None, base_url=None):
@@ -235,11 +243,14 @@ def process_queue(app):
     """Helper to process commands in the queue synchronously."""
     while not app.command_queue.empty():
         cmd = app.command_queue.get()
-        if cmd == "START_RECORDING":
-            app._do_start_recording()
-        elif cmd == "STOP_RECORDING":
+        command = cmd[0] if isinstance(cmd, tuple) else cmd
+        payload = cmd[1:] if isinstance(cmd, tuple) else ()
+        if command == "START_RECORDING":
+            mode = payload[0] if payload else "push-to-talk"
+            app._do_start_recording(mode)
+        elif command == "STOP_RECORDING":
             app._do_stop_recording()
-        elif cmd == "AUTO_STOP_RECORDING":
+        elif command == "AUTO_STOP_RECORDING":
             app._do_stop_recording(auto_stop=True)
         app.command_queue.task_done()
 
@@ -941,6 +952,7 @@ def test_parakeet_rest_recording_starts_auto_stop_timer(
         stt_provider="parakeet",
         parakeet_streaming_enabled=False,
         parakeet_rest_auto_stop_seconds=120.0,
+        enable_audio_feedback=False,
         enable_text_refinement=False,
     )
     app = make_app(config)
@@ -1048,6 +1060,138 @@ def test_process_recorded_audio_pipeline(
     assert not audio_path.exists()
 
 
+def test_recording_state_callback_reports_push_to_talk_and_idle(
+    make_app, dependency_stubs
+):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="openai",
+        openai_api_key="test-key",
+        enable_text_refinement=False,
+        enable_audio_feedback=False,
+    )
+    app = make_app(config)
+    states = []
+    app.set_recording_state_callback(states.append)
+
+    app._do_start_recording("push-to-talk")
+    app._do_stop_recording()
+
+    assert states == ["push-to-talk", "idle"]
+    assert app.recording_mode == "idle"
+
+
+def test_recording_state_callback_reports_toggle_mode(make_app, dependency_stubs):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="openai",
+        openai_api_key="test-key",
+        enable_text_refinement=False,
+        enable_audio_feedback=False,
+    )
+    app = make_app(config)
+    states = []
+    app.set_recording_state_callback(states.append)
+
+    app._do_start_recording("toggle")
+
+    assert states == ["toggle"]
+    assert app.recording_mode == "toggle"
+
+
+def test_start_callback_queues_current_hotkey_recording_mode(
+    make_app, dependency_stubs
+):
+    app = make_app()
+    hotkey_service = dependency_stubs.last("hotkey_service")
+    hotkey_service.is_toggle_recording = lambda: True
+
+    app._on_start_recording()
+
+    assert app.command_queue.get_nowait() == ("START_RECORDING", "toggle")
+
+
+def test_stop_feedback_plays_after_rest_recorder_releases_input(
+    make_app,
+    dependency_stubs,
+    immediate_thread,
+    tmp_path,
+    monkeypatch,
+):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="openai",
+        openai_api_key="test-key",
+        enable_text_refinement=False,
+        enable_audio_feedback=True,
+    )
+    app = make_app(config)
+    recorder = dependency_stubs.last("audio_recorder")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    recorder.audio_file = str(audio_path)
+    order = []
+
+    original_stop_recording = recorder.stop_recording
+
+    def stop_recording():
+        order.append("stop_recording")
+        return original_stop_recording()
+
+    monkeypatch.setattr(push_to_talk, "play_start_feedback", lambda: None)
+    monkeypatch.setattr(
+        push_to_talk,
+        "play_stop_feedback",
+        lambda: order.append("stop_feedback"),
+    )
+    recorder.stop_recording = stop_recording
+
+    app._do_start_recording()
+    app._do_stop_recording()
+
+    assert order[:2] == ["stop_recording", "stop_feedback"]
+
+
+def test_stop_feedback_plays_after_streaming_recorder_releases_input(
+    make_app,
+    dependency_stubs,
+    immediate_thread,
+    monkeypatch,
+):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+        enable_audio_feedback=True,
+    )
+    app = make_app(config)
+    recorder = dependency_stubs.last("audio_recorder")
+    recorder.is_recording = True
+    order = []
+
+    class StubStreamingSession:
+        drain_timeout = 0.1
+
+        def finish_recording(self):
+            order.append("finish_streaming")
+
+    original_stop_recording = recorder.stop_recording
+
+    def stop_recording():
+        order.append("stop_recording")
+        return original_stop_recording()
+
+    monkeypatch.setattr(
+        push_to_talk,
+        "play_stop_feedback",
+        lambda: order.append("stop_feedback"),
+    )
+    recorder.stop_recording = stop_recording
+    app.streaming_session = StubStreamingSession()
+
+    app._do_stop_recording()
+
+    assert order[:2] == ["stop_recording", "stop_feedback"]
+
+
 def test_process_recorded_audio_normalizes_sentence_spacing(
     make_app,
     dependency_stubs,
@@ -1057,6 +1201,7 @@ def test_process_recorded_audio_normalizes_sentence_spacing(
     config = push_to_talk.PushToTalkConfig(
         stt_provider="openai",
         openai_api_key="test-key",
+        enable_audio_feedback=False,
         enable_text_refinement=False,
     )
     app = make_app(config)

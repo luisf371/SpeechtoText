@@ -7,6 +7,7 @@ from tkinter import messagebox
 from typing import Callable
 from loguru import logger
 import customtkinter as ctk
+from pydantic import ValidationError
 
 from src.push_to_talk import PushToTalkConfig
 from src.config.constants import CONFIG_CHANGE_DEBOUNCE_DELAY_MS
@@ -17,6 +18,7 @@ from src.gui.glossary_section import GlossarySection
 from src.gui.prompt_section import PromptSection
 from src.gui.validators import validate_configuration
 from src.gui.config_persistence import ConfigurationPersistence
+from src.tray_indicator import RecordingMode, TrayIndicator
 
 ctk.set_appearance_mode("dark")
 
@@ -94,6 +96,8 @@ class ConfigurationWindow:
         self._status_dot: tk.Canvas | None = None
         self._status_label: ctk.CTkLabel | None = None
         self._start_btn: ctk.CTkButton | None = None
+        self._recording_mode: RecordingMode = "idle"
+        self._tray_indicator: TrayIndicator | None = None
 
         # Tab content anchor frames (filled during _build_tabs)
         self._stt_tab_content: ctk.CTkScrollableFrame | None = None
@@ -120,6 +124,8 @@ class ConfigurationWindow:
             pass
 
         self._build_layout()
+        self._bind_window_visibility_events()
+        self._start_tray_indicator()
         self._update_sections_from_config(self.config)
         self._setup_variable_traces()
         self._initialization_complete = True
@@ -345,17 +351,29 @@ class ConfigurationWindow:
         )
         self._start_btn.pack(side="left")
 
-    def _draw_status_dot(self, running: bool):
+    def _draw_status_dot(self, running: bool, recording_mode: str = "idle"):
         if not self._status_dot:
             return
         self._status_dot.delete("all")
-        color = "#27ae60" if running else C_TEXT3
+        if not running:
+            color = C_TEXT3
+        elif recording_mode in {"push-to-talk", "toggle"}:
+            color = C_DANGER
+        else:
+            color = "#27ae60"
         self._status_dot.create_oval(1, 1, 9, 9, fill=color, outline="")
 
     def _update_status(self, running: bool):
-        self._draw_status_dot(running)
+        recording_mode = self._foreground_recording_mode() if running else "idle"
+        self._draw_status_dot(running, recording_mode)
         if self._status_label:
-            if running:
+            if running and recording_mode == "toggle":
+                self._status_label.configure(
+                    text="Recording (toggle)", text_color=C_DANGER
+                )
+            elif running and recording_mode == "push-to-talk":
+                self._status_label.configure(text="Recording", text_color=C_DANGER)
+            elif running:
                 self._status_label.configure(text="Running", text_color="#27ae60")
             else:
                 self._status_label.configure(text="Ready to start", text_color=C_TEXT2)
@@ -471,7 +489,11 @@ class ConfigurationWindow:
         self._notify_config_changed(force=force)
 
     def _notify_config_changed(self, *, force: bool = False):
-        new_config = self._get_config_from_sections()
+        try:
+            new_config = self._get_config_from_sections()
+        except ValidationError as error:
+            logger.warning(f"Ignoring invalid configuration change: {error}")
+            return
         if not force and new_config == self.config:
             return
         self.config = new_config
@@ -600,12 +622,16 @@ class ConfigurationWindow:
             self.config = config
             self._config_persistence.save_sync(config, self.config_file_path)
             from src.push_to_talk import PushToTalkApp
-            self.app_instance = PushToTalkApp(self.config)
+            self.app_instance = PushToTalkApp(
+                self.config,
+                recording_state_callback=self._on_recording_state_changed,
+            )
             self.app_thread = threading.Thread(
                 target=self._run_application_thread, daemon=True
             )
             self.app_thread.start()
             self.is_running = True
+            self._on_recording_state_changed("idle")
             self._update_status(True)
             logger.info("Application started successfully")
         except Exception as e:
@@ -638,6 +664,7 @@ class ConfigurationWindow:
                 self.app_instance.stop()
                 logger.info("Application stopped by user")
             self.is_running = False
+            self._on_recording_state_changed("idle")
             self._update_status(False)
             if self.app_thread and self.app_thread.is_alive():
                 self.app_thread.join(timeout=1)
@@ -667,9 +694,101 @@ class ConfigurationWindow:
         self.root.mainloop()
         if self.is_running:
             self._stop_application()
+        self._stop_tray_indicator()
         if self.root:
             self.root.destroy()
         return self.result or "close"
+
+    def _bind_window_visibility_events(self):
+        if not self.root:
+            return
+        self.root.bind("<FocusIn>", self._on_window_visibility_changed, add="+")
+        self.root.bind("<FocusOut>", self._on_window_visibility_changed, add="+")
+        self.root.bind("<Map>", self._on_window_visibility_changed, add="+")
+        self.root.bind("<Unmap>", self._on_window_visibility_changed, add="+")
+
+    def _start_tray_indicator(self):
+        self._tray_indicator = TrayIndicator(
+            on_show=self._request_show_window,
+            on_stop=self._request_stop_application,
+            on_quit=self._request_close_application,
+        )
+        self._tray_indicator.start()
+
+    def _stop_tray_indicator(self):
+        if self._tray_indicator:
+            self._tray_indicator.stop()
+            self._tray_indicator = None
+
+    def _on_recording_state_changed(self, mode: str):
+        recording_mode = self._normalize_recording_mode(mode)
+        self._recording_mode = recording_mode
+        if self._tray_indicator:
+            self._tray_indicator.update(recording_mode)
+        if self.root and self.root.winfo_exists():
+            try:
+                self.root.after(0, self._refresh_visible_recording_status)
+            except Exception:
+                pass
+
+    def _refresh_visible_recording_status(self):
+        self._update_status(self.is_running)
+
+    def _foreground_recording_mode(self) -> RecordingMode:
+        if self._is_window_foreground():
+            return self._recording_mode
+        return "idle"
+
+    def _is_window_foreground(self) -> bool:
+        if not self.root or not self.root.winfo_exists():
+            return False
+        try:
+            if self.root.state() in {"withdrawn", "iconic"}:
+                return False
+        except Exception:
+            return False
+        try:
+            return self.root.focus_get() is not None
+        except Exception:
+            return False
+
+    def _on_window_visibility_changed(self, _event=None):
+        self._refresh_visible_recording_status()
+
+    def _request_show_window(self):
+        self._schedule_on_gui_thread(self._show_window)
+
+    def _request_stop_application(self):
+        self._schedule_on_gui_thread(self._stop_application)
+
+    def _request_close_application(self):
+        self._schedule_on_gui_thread(self._close_application)
+
+    def _schedule_on_gui_thread(self, callback: Callable[[], None]):
+        if self.root and self.root.winfo_exists():
+            try:
+                self.root.after(0, callback)
+            except Exception:
+                pass
+
+    def _show_window(self):
+        if not self.root or not self.root.winfo_exists():
+            return
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+        self._refresh_visible_recording_status()
+
+    @staticmethod
+    def _normalize_recording_mode(mode: str) -> RecordingMode:
+        if mode == "toggle":
+            return "toggle"
+        if mode == "push-to-talk":
+            return "push-to-talk"
+        return "idle"
 
 
 def show_configuration_gui(

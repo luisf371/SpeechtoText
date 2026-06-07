@@ -4,6 +4,20 @@ import tkinter as tk
 from typing import Callable
 import customtkinter as ctk
 
+from src.transcription_parakeet_streaming import (
+    PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+    PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
+    PARAKEET_STREAMING_MAX_BATCH_SIZE,
+    PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS,
+    PARAKEET_STREAMING_MIN_BATCH_SIZE,
+    PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS,
+)
 from src.gui.validators import (
     validate_openai_api_key,
     validate_deepgram_api_key,
@@ -35,6 +49,182 @@ C_ACCENT_DIM = "#1d1a0d"
 FONT_SM = ("Segoe UI", 13)
 FONT_MONO = ("Consolas", 14)
 FONT_HEAD = ("Segoe UI", 11, "bold")
+
+STREAMING_TUNING_FIELDS = [
+    {
+        "label": "Speech End Silence (ms)",
+        "description": "How long Parakeet waits after you stop speaking before it sends that speech for transcription.",
+        "default": PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS,
+        "minimum": PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS,
+        "maximum": PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS,
+        "step": 50,
+        "decimals": 0,
+    },
+    {
+        "label": "Max Chunk (s)",
+        "description": "Longest single speech segment Parakeet will collect before forcing a transcription.",
+        "default": PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS,
+        "minimum": PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS,
+        "maximum": PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS,
+        "step": 0.5,
+        "decimals": 1,
+    },
+    {
+        "label": "Batch Size",
+        "description": "Maximum number of speech segments the server can process together at once.",
+        "default": PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+        "minimum": PARAKEET_STREAMING_MIN_BATCH_SIZE,
+        "maximum": PARAKEET_STREAMING_MAX_BATCH_SIZE,
+        "step": 1,
+        "decimals": 0,
+    },
+    {
+        "label": "Batch Window (ms)",
+        "description": "How long the server may briefly wait to group nearby speech segments together.",
+        "default": PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
+        "minimum": PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS,
+        "maximum": PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS,
+        "step": 5.0,
+        "decimals": 1,
+    },
+]
+
+
+class _Tooltip:
+    def __init__(self, widget, text: str):
+        self.widget = widget
+        self.text = text
+        self._window: tk.Toplevel | None = None
+        self._after_id: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(250, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self):
+        self._after_id = None
+        if self._window or not self.widget.winfo_exists():
+            return
+
+        x = self.widget.winfo_rootx() + 18
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self._window = tk.Toplevel(self.widget)
+        self._window.wm_overrideredirect(True)
+        self._window.wm_geometry(f"+{x}+{y}")
+        self._window.configure(bg=C_BORDER)
+
+        label = tk.Label(
+            self._window,
+            text=self.text,
+            justify="left",
+            bg=C_SURFACE,
+            fg=C_TEXT,
+            padx=10,
+            pady=8,
+            font=("Segoe UI", 10),
+            wraplength=280,
+            relief="flat",
+            borderwidth=0,
+        )
+        label.pack(padx=1, pady=1)
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._window:
+            self._window.destroy()
+            self._window = None
+
+
+class _NumericSpinbox(ctk.CTkFrame):
+    def __init__(
+        self,
+        parent,
+        *,
+        variable: tk.StringVar,
+        minimum: float,
+        maximum: float,
+        step: float,
+        default: float,
+        decimals: int,
+    ):
+        super().__init__(
+            parent,
+            fg_color=C_INPUT,
+            border_color=C_BORDER,
+            border_width=1,
+            corner_radius=7,
+            height=33,
+        )
+        self.variable = variable
+        self.minimum = minimum
+        self.maximum = maximum
+        self.step = step
+        self.default = default
+        self.decimals = decimals
+        self.pack_propagate(False)
+
+        spinbox_format = f"%.{decimals}f" if decimals > 0 else None
+        spinbox_options = {
+            "from_": minimum,
+            "to": maximum,
+            "increment": step,
+            "textvariable": variable,
+            "command": self.clamp_current,
+            "font": FONT_MONO,
+            "bg": C_INPUT,
+            "fg": C_TEXT,
+            "insertbackground": C_TEXT,
+            "buttonbackground": C_SURFACE2,
+            "selectbackground": C_ACCENT_DIM,
+            "selectforeground": C_TEXT,
+            "relief": "flat",
+            "borderwidth": 0,
+            "highlightthickness": 0,
+            "justify": "left",
+            "wrap": False,
+        }
+        if spinbox_format:
+            spinbox_options["format"] = spinbox_format
+
+        self.entry = tk.Spinbox(
+            self,
+            **spinbox_options,
+        )
+        self.entry.pack(fill="both", expand=True, padx=8, pady=4)
+        self.entry.bind("<FocusOut>", lambda _event: self.clamp_current(), add="+")
+        self.entry.bind(
+            "<Return>",
+            lambda _event: (self.clamp_current(), "break")[1],
+            add="+",
+        )
+
+    def _parse(self) -> float:
+        try:
+            return float(self.variable.get())
+        except ValueError:
+            return float(self.default)
+
+    def _format(self, value: float) -> str:
+        if self.decimals == 0:
+            return str(int(round(value)))
+        return f"{value:.{self.decimals}f}"
+
+    def clamp_current(self):
+        value = min(max(self._parse(), self.minimum), self.maximum)
+        self.variable.set(self._format(value))
+
+    def adjust(self, delta: float):
+        value = self._parse() + delta
+        value = min(max(value, self.minimum), self.maximum)
+        self.variable.set(self._format(value))
 
 
 def _subhead(parent, text: str, pill: str | None = None):
@@ -209,6 +399,7 @@ class APISection:
 
         self.stt_model_combo: ctk.CTkOptionMenu | None = None
         self.refinement_model_combo: ctk.CTkOptionMenu | None = None
+        self._streaming_tuning_spinboxes: list[_NumericSpinbox] = []
         self._parakeet_section: ctk.CTkFrame | None = None
         self._custom_stt_section: ctk.CTkFrame | None = None
         self._custom_ref_section: ctk.CTkFrame | None = None
@@ -317,35 +508,78 @@ class APISection:
             self._parakeet_section, fg_color="transparent", corner_radius=0
         )
         grid.pack(fill="x")
-        grid.columnconfigure((0, 1, 2, 3), weight=1)
+        grid.columnconfigure((0, 1), weight=1)
 
         tuning = [
-            ("VAD End Silence (ms)", self.parakeet_streaming_vad_end_silence_ms_var),
-            ("Max Chunk (s)", self.parakeet_streaming_max_chunk_seconds_var),
-            ("Batch Size", self.parakeet_streaming_batch_size_var),
-            ("Batch Window (ms)", self.parakeet_streaming_batch_window_ms_var),
+            (
+                self.parakeet_streaming_vad_end_silence_ms_var,
+                STREAMING_TUNING_FIELDS[0],
+            ),
+            (
+                self.parakeet_streaming_max_chunk_seconds_var,
+                STREAMING_TUNING_FIELDS[1],
+            ),
+            (self.parakeet_streaming_batch_size_var, STREAMING_TUNING_FIELDS[2]),
+            (
+                self.parakeet_streaming_batch_window_ms_var,
+                STREAMING_TUNING_FIELDS[3],
+            ),
         ]
-        for col, (lbl, var) in enumerate(tuning):
+        for index, (var, meta) in enumerate(tuning):
+            row = index // 2
+            col = index % 2
             cell = ctk.CTkFrame(grid, fg_color="transparent", corner_radius=0)
-            cell.grid(row=0, column=col, sticky="ew", padx=(0, 8 if col < 3 else 0))
+            cell.grid(
+                row=row,
+                column=col,
+                sticky="ew",
+                padx=(0, 10 if col == 0 else 0),
+                pady=(0, 10),
+            )
+            label_row = ctk.CTkFrame(cell, fg_color="transparent", corner_radius=0)
+            label_row.pack(fill="x", pady=(0, 3))
             ctk.CTkLabel(
-                cell,
-                text=lbl,
+                label_row,
+                text=meta["label"],
                 font=("Segoe UI", 11),
                 text_color=C_TEXT3,
                 fg_color="transparent",
                 anchor="w",
-            ).pack(anchor="w", pady=(0, 3))
-            ctk.CTkEntry(
+            ).pack(side="left", anchor="w")
+            help_button = ctk.CTkButton(
+                label_row,
+                text="?",
+                width=18,
+                height=18,
+                font=("Segoe UI", 10, "bold"),
+                fg_color=C_SURFACE2,
+                hover_color=C_ACCENT_DIM,
+                text_color=C_TEXT2,
+                corner_radius=999,
+            )
+            help_button.pack(side="left", padx=(6, 0))
+            _Tooltip(
+                help_button,
+                "\n".join(
+                    [
+                        meta["description"],
+                        f"Minimum: {meta['minimum']}",
+                        f"Maximum: {meta['maximum']}",
+                        f"Default: {meta['default']}",
+                    ]
+                ),
+            )
+            spinbox = _NumericSpinbox(
                 cell,
-                textvariable=var,
-                font=FONT_MONO,
-                fg_color=C_INPUT,
-                border_color=C_BORDER,
-                text_color=C_TEXT,
-                height=33,
-                corner_radius=7,
-            ).pack(fill="x")
+                variable=var,
+                minimum=meta["minimum"],
+                maximum=meta["maximum"],
+                step=meta["step"],
+                default=meta["default"],
+                decimals=meta["decimals"],
+            )
+            spinbox.pack(fill="x")
+            self._streaming_tuning_spinboxes.append(spinbox)
 
         # ── Custom STT section ────────────────────────────────────────────
         self._custom_stt_section = ctk.CTkFrame(
@@ -632,6 +866,9 @@ class APISection:
     # ── Public interface ───────────────────────────────────────────────────────
 
     def get_values(self) -> dict:
+        for spinbox in self._streaming_tuning_spinboxes:
+            spinbox.clamp_current()
+
         return {
             "stt_provider": self.stt_provider_var.get(),
             "openai_api_key": self.openai_api_key_var.get().strip(),
@@ -669,10 +906,16 @@ class APISection:
         custom_refinement_endpoint="",
         parakeet_endpoint="http://localhost:8000",
         parakeet_streaming_enabled=False,
-        parakeet_streaming_vad_end_silence_ms=250,
-        parakeet_streaming_max_chunk_seconds=8.0,
-        parakeet_streaming_batch_size=4,
-        parakeet_streaming_batch_window_ms=15,
+        parakeet_streaming_vad_end_silence_ms=(
+            PARAKEET_STREAMING_DEFAULT_VAD_END_SILENCE_MS
+        ),
+        parakeet_streaming_max_chunk_seconds=(
+            PARAKEET_STREAMING_DEFAULT_MAX_CHUNK_SECONDS
+        ),
+        parakeet_streaming_batch_size=PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
+        parakeet_streaming_batch_window_ms=(
+            PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS
+        ),
     ):
         self.openai_api_key_var.set(openai_api_key)
         self.deepgram_api_key_var.set(deepgram_api_key)

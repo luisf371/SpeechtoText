@@ -13,7 +13,18 @@ keyboard_stub = create_keyboard_stub()
 sys.modules.setdefault("pynput", types.SimpleNamespace(keyboard=keyboard_stub))
 sys.modules.setdefault("pynput.keyboard", keyboard_stub)
 
+from src.gui.configuration_window import C_DANGER, ConfigurationWindow  # noqa: E402
 from src.push_to_talk import PushToTalkConfig  # noqa: E402
+from src.transcription_parakeet_streaming import (  # noqa: E402
+    PARAKEET_STREAMING_MAX_BATCH_SIZE,
+    PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS,
+    PARAKEET_STREAMING_MIN_BATCH_SIZE,
+    PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS,
+    PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS,
+    PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS,
+)
 
 
 def test_gui_updates_running_app_when_config_changes(prepared_config_gui):
@@ -56,6 +67,29 @@ def test_force_notify_triggers_update_even_when_values_match(prepared_config_gui
     forced_config = gui.app_instance.update_configuration.call_args[0][0]
     gui.on_config_changed.assert_called_once_with(forced_config)
     assert forced_config == config
+
+
+def test_recording_dot_changes_only_when_window_is_foreground():
+    gui = ConfigurationWindow(PushToTalkConfig(openai_api_key="test-key"))
+    gui.root = MagicMock()
+    gui.root.winfo_exists.return_value = True
+    gui.root.state.return_value = "normal"
+    gui._status_dot = MagicMock()
+    gui._status_label = MagicMock()
+    gui._start_btn = MagicMock()
+    gui._recording_mode = "push-to-talk"
+
+    gui.root.focus_get.return_value = object()
+    gui._update_status(True)
+    foreground_fill = gui._status_dot.create_oval.call_args.kwargs["fill"]
+
+    gui._status_dot.reset_mock()
+    gui.root.focus_get.return_value = None
+    gui._update_status(True)
+    background_fill = gui._status_dot.create_oval.call_args.kwargs["fill"]
+
+    assert foreground_fill == C_DANGER
+    assert background_fill == "#27ae60"
 
 
 def test_config_changes_trigger_async_save(tmp_path, prepared_config_gui, mocker):
@@ -386,3 +420,47 @@ def test_loaded_config_not_overwritten_during_initialization(
     assert saved_config["sample_rate"] == 16000
     assert saved_config["enable_text_refinement"] is False
     assert saved_config["enable_audio_feedback"] is False
+
+
+def test_streaming_tuning_values_are_clamped_before_save(prepared_config_gui):
+    gui = prepared_config_gui
+
+    gui.api_section.parakeet_streaming_vad_end_silence_ms_var.set("1")
+    gui.api_section.parakeet_streaming_max_chunk_seconds_var.set("999")
+    gui.api_section.parakeet_streaming_batch_size_var.set("0")
+    gui.api_section.parakeet_streaming_batch_window_ms_var.set("2000")
+
+    values = gui.api_section.get_values()
+
+    assert values["parakeet_streaming_vad_end_silence_ms"] == str(
+        PARAKEET_STREAMING_MIN_VAD_END_SILENCE_MS
+    )
+    assert values["parakeet_streaming_max_chunk_seconds"] == (
+        f"{PARAKEET_STREAMING_MAX_MAX_CHUNK_SECONDS:.1f}"
+    )
+    assert values["parakeet_streaming_batch_size"] == str(
+        PARAKEET_STREAMING_MIN_BATCH_SIZE
+    )
+    assert values["parakeet_streaming_batch_window_ms"] == (
+        f"{PARAKEET_STREAMING_MAX_BATCH_WINDOW_MS:.1f}"
+    )
+
+    gui.api_section.parakeet_streaming_vad_end_silence_ms_var.set("99999")
+    gui.api_section.parakeet_streaming_max_chunk_seconds_var.set("0.1")
+    gui.api_section.parakeet_streaming_batch_size_var.set("1000")
+    gui.api_section.parakeet_streaming_batch_window_ms_var.set("-1")
+
+    values = gui.api_section.get_values()
+
+    assert values["parakeet_streaming_vad_end_silence_ms"] == str(
+        PARAKEET_STREAMING_MAX_VAD_END_SILENCE_MS
+    )
+    assert values["parakeet_streaming_max_chunk_seconds"] == (
+        f"{PARAKEET_STREAMING_MIN_MAX_CHUNK_SECONDS:.1f}"
+    )
+    assert values["parakeet_streaming_batch_size"] == str(
+        PARAKEET_STREAMING_MAX_BATCH_SIZE
+    )
+    assert values["parakeet_streaming_batch_window_ms"] == (
+        f"{PARAKEET_STREAMING_MIN_BATCH_WINDOW_MS:.1f}"
+    )
