@@ -1,9 +1,9 @@
 """Configuration file persistence for PushToTalk."""
 
-import json
 import threading
 from typing import Optional, Tuple
 from loguru import logger
+from src.config.file_io import write_json_atomic
 from src.push_to_talk import PushToTalkConfig
 
 
@@ -41,9 +41,7 @@ class ConfigurationPersistence:
             while True:
                 try:
                     # Perform the actual save
-                    config_data = cfg.model_dump()
-                    with open(path, "w") as f:
-                        json.dump(config_data, f, indent=2)
+                    write_json_atomic(path, cfg.model_dump())
 
                     logger.debug(f"Configuration auto-saved to {path}")
 
@@ -92,7 +90,5 @@ class ConfigurationPersistence:
         Raises:
             Exception: If save operation fails
         """
-        config_data = config.model_dump()
-        with open(filepath, "w") as f:
-            json.dump(config_data, f, indent=2)
+        write_json_atomic(filepath, config.model_dump())
         logger.info(f"Configuration saved to {filepath}")

@@ -78,3 +78,13 @@ Append-only lessons learned log. Newest notes go at the bottom. Keep entries bri
 - Parakeet streaming boundary spaces are now sent as a real `Space` keypress via `TextInserter.insert_space()` before pasting the next chunk, because some target apps appear to drop/ignore leading spaces embedded in clipboard payloads.
 - `streaming_boundary_space_keypress` is an Advanced runtime toggle: ON sends chunk boundaries as `Space` keypress + paste chunk, OFF uses the more efficient single clipboard paste with leading whitespace (`" chunk"`) for text fields that preserve it.
 - Do not gate Parakeet streaming text insertion on the physical PTT key state: live WebSocket chunks must paste while PTT is held. Flush issues belong in `ParakeetStreamingSession.finish_recording()` by making sure queued final audio/silence frames are sent before the final-text drain window.
+
+## 2026-06-07 (improvement pass)
+
+- Provider/model lists are centralized in src/provider_registry.py; config validation, factories, and GUI provider/model dropdowns should read from that registry instead of duplicating hard-coded provider arrays.
+
+- Streaming text insertion now lives in src/streaming_text_inserter.py, final audio processing/debug export in src/audio_processing_service.py, and sentence spacing helpers in src/text_formatting.py; PushToTalkApp keeps wrapper methods for compatibility.
+- Queue workers should call 	ask_done() for every successful get(), including sentinel commands; _worker_loop() uses a inally path for that invariant.
+- Config writes use src/config/file_io.py::write_json_atomic() (NamedTemporaryFile in target dir + os.replace) to avoid partially written JSON during async saves.
+
+- Removed stale tracked coverage.xml and added it to .gitignore; regenerate coverage locally instead of relying on a checked-in report that can drift from src/. README provider/config docs now include Parakeet, custom STT/refinement endpoints, streaming knobs, and current hotkey defaults.

@@ -3,6 +3,7 @@ from src.text_refiner_base import TextRefinerBase
 from src.text_refiner_openai import TextRefinerOpenAI
 from src.text_refiner_cerebras import CerebrasTextRefiner
 from src.text_refiner_gemini import GeminiTextRefiner
+from src.provider_registry import refinement_provider_names
 
 
 class TextRefinerFactory:
@@ -41,9 +42,10 @@ class TextRefinerFactory:
         elif provider == "custom":
             refiner = TextRefinerOpenAI(api_key=api_key, model=model, base_url=base_url)
         else:
+            supported = ", ".join(refinement_provider_names())
             raise ValueError(
                 f"Unsupported refinement provider: {provider}. "
-                f"Supported providers: openai, cerebras, gemini, custom"
+                f"Supported providers: {supported}"
             )
 
         # Set glossary if provided

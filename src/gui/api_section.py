@@ -10,21 +10,29 @@ from src.gui.validators import (
     validate_cerebras_api_key,
     validate_gemini_api_key,
 )
+from src.provider_registry import (
+    default_refinement_model,
+    default_stt_model,
+    refinement_models,
+    refinement_provider_names,
+    stt_models,
+    stt_provider_names,
+)
 
-C_WIN      = "#131519"
-C_INPUT    = "#0e1013"
-C_BORDER   = "#2a2f38"
+C_WIN = "#131519"
+C_INPUT = "#0e1013"
+C_BORDER = "#2a2f38"
 C_BORDER_S = "#21252c"
-C_TEXT     = "#e7e9ec"
-C_TEXT2    = "#9ba2ab"
-C_TEXT3    = "#6a717b"
-C_SURFACE  = "#1b1e24"
+C_TEXT = "#e7e9ec"
+C_TEXT2 = "#9ba2ab"
+C_TEXT3 = "#6a717b"
+C_SURFACE = "#1b1e24"
 C_SURFACE2 = "#23272f"
-C_ACCENT   = "#f5a524"
-C_ACCENT2  = "#ffb454"
+C_ACCENT = "#f5a524"
+C_ACCENT2 = "#ffb454"
 C_ACCENT_DIM = "#1d1a0d"
 
-FONT_SM   = ("Segoe UI", 13)
+FONT_SM = ("Segoe UI", 13)
 FONT_MONO = ("Consolas", 14)
 FONT_HEAD = ("Segoe UI", 11, "bold")
 
@@ -34,13 +42,20 @@ def _subhead(parent, text: str, pill: str | None = None):
     row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
     row.pack(fill="x", pady=(16, 10))
     ctk.CTkLabel(
-        row, text=text.upper(), font=FONT_HEAD, text_color=C_TEXT3,
+        row,
+        text=text.upper(),
+        font=FONT_HEAD,
+        text_color=C_TEXT3,
         fg_color="transparent",
     ).pack(side="left")
     if pill:
         ctk.CTkLabel(
-            row, text=f"  {pill}  ", font=("Segoe UI", 11),
-            text_color=C_ACCENT2, fg_color=C_ACCENT_DIM, corner_radius=999,
+            row,
+            text=f"  {pill}  ",
+            font=("Segoe UI", 11),
+            text_color=C_ACCENT2,
+            fg_color=C_ACCENT_DIM,
+            corner_radius=999,
         ).pack(side="right")
     ctk.CTkFrame(row, fg_color=C_BORDER_S, height=1, corner_radius=0).pack(
         side="left", fill="x", expand=True, padx=10
@@ -48,47 +63,96 @@ def _subhead(parent, text: str, pill: str | None = None):
     return row
 
 
-def _field(parent, label: str, variable: tk.StringVar, mono=False, show="", placeholder="") -> ctk.CTkEntry:
+def _field(
+    parent, label: str, variable: tk.StringVar, mono=False, show="", placeholder=""
+) -> ctk.CTkEntry:
     row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
     row.pack(fill="x", pady=(0, 10))
-    ctk.CTkLabel(row, text=label, font=FONT_SM, text_color=C_TEXT2,
-                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(0, 4))
+    ctk.CTkLabel(
+        row,
+        text=label,
+        font=FONT_SM,
+        text_color=C_TEXT2,
+        fg_color="transparent",
+        anchor="w",
+    ).pack(anchor="w", pady=(0, 4))
     font = ("Consolas", 10) if mono else FONT_SM
     entry = ctk.CTkEntry(
-        row, textvariable=variable, font=font,
-        fg_color=C_INPUT, border_color=C_BORDER, text_color=C_TEXT,
-        placeholder_text=placeholder, show=show, height=33, corner_radius=7,
+        row,
+        textvariable=variable,
+        font=font,
+        fg_color=C_INPUT,
+        border_color=C_BORDER,
+        text_color=C_TEXT,
+        placeholder_text=placeholder,
+        show=show,
+        height=33,
+        corner_radius=7,
     )
     entry.pack(fill="x")
     return entry
 
 
 def _hint(parent, text: str):
-    ctk.CTkLabel(parent, text=text, font=("Segoe UI", 12), text_color=C_TEXT3,
-                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(2, 0))
+    ctk.CTkLabel(
+        parent,
+        text=text,
+        font=("Segoe UI", 12),
+        text_color=C_TEXT3,
+        fg_color="transparent",
+        anchor="w",
+    ).pack(anchor="w", pady=(2, 0))
 
 
-def _combo(parent, label: str, variable: tk.StringVar, values: list[str],
-           command=None, state="readonly") -> ctk.CTkOptionMenu:
+def _combo(
+    parent,
+    label: str,
+    variable: tk.StringVar,
+    values: list[str],
+    command=None,
+    state="readonly",
+) -> ctk.CTkOptionMenu:
     row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
     row.pack(fill="x", pady=(0, 10))
-    ctk.CTkLabel(row, text=label, font=FONT_SM, text_color=C_TEXT2,
-                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(0, 4))
+    ctk.CTkLabel(
+        row,
+        text=label,
+        font=FONT_SM,
+        text_color=C_TEXT2,
+        fg_color="transparent",
+        anchor="w",
+    ).pack(anchor="w", pady=(0, 4))
 
     # Bordered shell gives the OptionMenu the same 1px inset border as the
     # text inputs; the menu fills it so the whole control reads as one box.
-    shell = ctk.CTkFrame(row, fg_color=C_INPUT, border_color=C_BORDER,
-                         border_width=1, corner_radius=7, height=33)
+    shell = ctk.CTkFrame(
+        row,
+        fg_color=C_INPUT,
+        border_color=C_BORDER,
+        border_width=1,
+        corner_radius=7,
+        height=33,
+    )
     shell.pack(fill="x")
     shell.pack_propagate(False)
 
     combo = ctk.CTkOptionMenu(
-        shell, variable=variable, values=values, command=command,
-        font=FONT_SM, corner_radius=6, anchor="w", dynamic_resizing=False,
-        fg_color=C_INPUT, button_color=C_INPUT, button_hover_color=C_SURFACE,
+        shell,
+        variable=variable,
+        values=values,
+        command=command,
+        font=FONT_SM,
+        corner_radius=6,
+        anchor="w",
+        dynamic_resizing=False,
+        fg_color=C_INPUT,
+        button_color=C_INPUT,
+        button_hover_color=C_SURFACE,
         text_color=C_TEXT,
-        dropdown_fg_color=C_SURFACE, dropdown_text_color=C_TEXT,
-        dropdown_hover_color=C_SURFACE2, dropdown_font=FONT_SM,
+        dropdown_fg_color=C_SURFACE,
+        dropdown_text_color=C_TEXT,
+        dropdown_hover_color=C_SURFACE2,
+        dropdown_font=FONT_SM,
     )
     if state == "disabled":
         combo.configure(state="disabled")
@@ -108,13 +172,19 @@ class APISection:
     ):
         self.on_change = on_change
 
-        self.stt_frame = ctk.CTkFrame(stt_parent, fg_color="transparent", corner_radius=0)
+        self.stt_frame = ctk.CTkFrame(
+            stt_parent, fg_color="transparent", corner_radius=0
+        )
         self.stt_frame.pack(fill="x")
 
-        self.refinement_frame = ctk.CTkFrame(refinement_parent, fg_color="transparent", corner_radius=0)
+        self.refinement_frame = ctk.CTkFrame(
+            refinement_parent, fg_color="transparent", corner_radius=0
+        )
         self.refinement_frame.pack(fill="x")
 
-        self.api_keys_frame = ctk.CTkFrame(keys_parent, fg_color="transparent", corner_radius=0)
+        self.api_keys_frame = ctk.CTkFrame(
+            keys_parent, fg_color="transparent", corner_radius=0
+        )
         self.api_keys_frame.pack(fill="x")
 
         # Variables
@@ -137,22 +207,22 @@ class APISection:
         self.parakeet_streaming_batch_size_var = tk.StringVar()
         self.parakeet_streaming_batch_window_ms_var = tk.StringVar()
 
-        self.stt_model_combo: ctk.CTkComboBox | None = None
-        self.refinement_model_combo: ctk.CTkComboBox | None = None
+        self.stt_model_combo: ctk.CTkOptionMenu | None = None
+        self.refinement_model_combo: ctk.CTkOptionMenu | None = None
         self._parakeet_section: ctk.CTkFrame | None = None
         self._custom_stt_section: ctk.CTkFrame | None = None
         self._custom_ref_section: ctk.CTkFrame | None = None
 
         # Per-provider remembered models
-        self.openai_stt_model = "gpt-4o-mini-transcribe"
-        self.deepgram_stt_model = "nova-3"
-        self.parakeet_stt_model = "parakeet-tdt-0.6b-v2"
-        self.custom_stt_model = "whisper-1"
+        self.openai_stt_model = default_stt_model("openai")
+        self.deepgram_stt_model = default_stt_model("deepgram")
+        self.parakeet_stt_model = default_stt_model("parakeet")
+        self.custom_stt_model = default_stt_model("custom")
 
-        self.openai_refinement_model = "gpt-4.1-nano"
-        self.cerebras_refinement_model = "llama-3.3-70b"
-        self.gemini_refinement_model = "gemini-3-flash-preview"
-        self.custom_refinement_model = "llama3"
+        self.openai_refinement_model = default_refinement_model("openai")
+        self.cerebras_refinement_model = default_refinement_model("cerebras")
+        self.gemini_refinement_model = default_refinement_model("gemini")
+        self.custom_refinement_model = default_refinement_model("custom")
 
         self._create_stt_widgets()
         self._create_refinement_widgets()
@@ -164,32 +234,45 @@ class APISection:
         f = self.stt_frame
 
         self.stt_provider_combo = _combo(
-            f, "STT Provider", self.stt_provider_var,
-            values=["openai", "deepgram", "parakeet", "custom"],
+            f,
+            "STT Provider",
+            self.stt_provider_var,
+            values=stt_provider_names(),
             command=lambda _v: self._on_provider_changed(),
         )
         self.stt_model_combo = _combo(
-            f, "STT Model", self.stt_model_var,
-            values=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+            f,
+            "STT Model",
+            self.stt_model_var,
+            values=stt_models("openai"),
             command=lambda _v: self._on_stt_model_changed(),
             state="normal",
         )
 
         # ── Parakeet section ──────────────────────────────────────────────
-        self._parakeet_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._parakeet_section = ctk.CTkFrame(
+            f, fg_color="transparent", corner_radius=0
+        )
         self._parakeet_section.pack(fill="x")
 
         _subhead(self._parakeet_section, "Parakeet", pill="● Provider: parakeet")
 
-        _field(self._parakeet_section, "Endpoint",
-               self.parakeet_endpoint_var, mono=True,
-               placeholder="http://192.168.1.234:8678")
+        _field(
+            self._parakeet_section,
+            "Endpoint",
+            self.parakeet_endpoint_var,
+            mono=True,
+            placeholder="http://192.168.1.234:8678",
+        )
         _hint(self._parakeet_section, "Base URL, e.g. http://192.168.1.234:8678")
 
         # "Use WebSocket streaming" — trow card style
         stream_card = ctk.CTkFrame(
-            self._parakeet_section, fg_color=C_SURFACE, corner_radius=9,
-            border_width=1, border_color=C_BORDER_S,
+            self._parakeet_section,
+            fg_color=C_SURFACE,
+            corner_radius=9,
+            border_width=1,
+            border_color=C_BORDER_S,
         )
         stream_card.pack(fill="x", pady=(8, 4))
         sc_inner = ctk.CTkFrame(stream_card, fg_color="transparent", corner_radius=0)
@@ -197,51 +280,84 @@ class APISection:
         sc_header = ctk.CTkFrame(sc_inner, fg_color="transparent", corner_radius=0)
         sc_header.pack(fill="x")
         ctk.CTkLabel(
-            sc_header, text="Use WebSocket streaming",
-            font=("Segoe UI", 13, "bold"), text_color=C_TEXT,
-            fg_color="transparent", anchor="w",
+            sc_header,
+            text="Use WebSocket streaming",
+            font=("Segoe UI", 13, "bold"),
+            text_color=C_TEXT,
+            fg_color="transparent",
+            anchor="w",
         ).pack(side="left")
         ctk.CTkSwitch(
-            sc_header, variable=self.parakeet_streaming_enabled_var,
-            text="", onvalue=True, offvalue=False,
+            sc_header,
+            variable=self.parakeet_streaming_enabled_var,
+            text="",
+            onvalue=True,
+            offvalue=False,
             command=lambda: self.on_change() if self.on_change else None,
-            progress_color=C_ACCENT, fg_color=C_SURFACE2,
-            button_color=C_TEXT, button_hover_color=C_TEXT,
-            switch_width=38, switch_height=20,
+            progress_color=C_ACCENT,
+            fg_color=C_SURFACE2,
+            button_color=C_TEXT,
+            button_hover_color=C_TEXT,
+            switch_width=38,
+            switch_height=20,
         ).pack(side="right")
         ctk.CTkLabel(
-            sc_inner, text="Stream audio live for lower latency",
-            font=("Segoe UI", 11), text_color=C_TEXT3, fg_color="transparent", anchor="w",
+            sc_inner,
+            text="Stream audio live for lower latency",
+            font=("Segoe UI", 11),
+            text_color=C_TEXT3,
+            fg_color="transparent",
+            anchor="w",
         ).pack(anchor="w", pady=(2, 0))
 
         # Streaming tuning
         _subhead(self._parakeet_section, "Streaming tuning")
 
-        grid = ctk.CTkFrame(self._parakeet_section, fg_color="transparent", corner_radius=0)
+        grid = ctk.CTkFrame(
+            self._parakeet_section, fg_color="transparent", corner_radius=0
+        )
         grid.pack(fill="x")
         grid.columnconfigure((0, 1, 2, 3), weight=1)
 
         tuning = [
             ("VAD End Silence (ms)", self.parakeet_streaming_vad_end_silence_ms_var),
-            ("Max Chunk (s)",         self.parakeet_streaming_max_chunk_seconds_var),
-            ("Batch Size",             self.parakeet_streaming_batch_size_var),
-            ("Batch Window (ms)",      self.parakeet_streaming_batch_window_ms_var),
+            ("Max Chunk (s)", self.parakeet_streaming_max_chunk_seconds_var),
+            ("Batch Size", self.parakeet_streaming_batch_size_var),
+            ("Batch Window (ms)", self.parakeet_streaming_batch_window_ms_var),
         ]
         for col, (lbl, var) in enumerate(tuning):
             cell = ctk.CTkFrame(grid, fg_color="transparent", corner_radius=0)
             cell.grid(row=0, column=col, sticky="ew", padx=(0, 8 if col < 3 else 0))
-            ctk.CTkLabel(cell, text=lbl, font=("Segoe UI", 11),
-                         text_color=C_TEXT3, fg_color="transparent",
-                         anchor="w").pack(anchor="w", pady=(0, 3))
-            ctk.CTkEntry(cell, textvariable=var, font=FONT_MONO,
-                         fg_color=C_INPUT, border_color=C_BORDER,
-                         text_color=C_TEXT, height=33, corner_radius=7).pack(fill="x")
+            ctk.CTkLabel(
+                cell,
+                text=lbl,
+                font=("Segoe UI", 11),
+                text_color=C_TEXT3,
+                fg_color="transparent",
+                anchor="w",
+            ).pack(anchor="w", pady=(0, 3))
+            ctk.CTkEntry(
+                cell,
+                textvariable=var,
+                font=FONT_MONO,
+                fg_color=C_INPUT,
+                border_color=C_BORDER,
+                text_color=C_TEXT,
+                height=33,
+                corner_radius=7,
+            ).pack(fill="x")
 
         # ── Custom STT section ────────────────────────────────────────────
-        self._custom_stt_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._custom_stt_section = ctk.CTkFrame(
+            f, fg_color="transparent", corner_radius=0
+        )
         self._custom_stt_section.pack(fill="x")
-        _field(self._custom_stt_section, "Custom STT Endpoint",
-               self.custom_stt_endpoint_var, mono=True)
+        _field(
+            self._custom_stt_section,
+            "Custom STT Endpoint",
+            self.custom_stt_endpoint_var,
+            mono=True,
+        )
         _hint(self._custom_stt_section, "Required when STT provider is custom")
 
         self._update_custom_endpoint_visibility()
@@ -250,34 +366,42 @@ class APISection:
         f = self.refinement_frame
 
         self.refinement_provider_combo = _combo(
-            f, "Refinement Provider", self.refinement_provider_var,
-            values=["openai", "cerebras", "gemini", "custom"],
+            f,
+            "Refinement Provider",
+            self.refinement_provider_var,
+            values=refinement_provider_names(),
             command=lambda _v: self._on_refinement_provider_changed(),
         )
         self.refinement_model_combo = _combo(
-            f, "Refinement Model", self.refinement_model_var,
-            values=["gpt-5", "gpt-5-mini", "gpt-5-nano",
-                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-                    "gpt-4o-mini", "gpt-4o"],
+            f,
+            "Refinement Model",
+            self.refinement_model_var,
+            values=refinement_models("openai"),
             command=lambda _v: self._on_refinement_model_changed(),
             state="normal",
         )
 
-        self._custom_ref_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._custom_ref_section = ctk.CTkFrame(
+            f, fg_color="transparent", corner_radius=0
+        )
         self._custom_ref_section.pack(fill="x")
-        _field(self._custom_ref_section, "Custom Refinement Endpoint",
-               self.custom_refinement_endpoint_var, mono=True)
+        _field(
+            self._custom_ref_section,
+            "Custom Refinement Endpoint",
+            self.custom_refinement_endpoint_var,
+            mono=True,
+        )
         _hint(self._custom_ref_section, "Required when refinement provider is custom")
 
     def _create_keys_widgets(self):
         f = self.api_keys_frame
         self._key_badges: dict[str, tuple[tk.StringVar, ctk.CTkLabel]] = {}
         rows = [
-            ("OpenAI",   self.openai_api_key_var,   "sk-…"),
-            ("Deepgram", self.deepgram_api_key_var,  "Not set"),
-            ("Cerebras", self.cerebras_api_key_var,  "Not set"),
-            ("Gemini",   self.gemini_api_key_var,    "Not set"),
-            ("Custom",   self.custom_api_key_var,    "Not set"),
+            ("OpenAI", self.openai_api_key_var, "sk-…"),
+            ("Deepgram", self.deepgram_api_key_var, "Not set"),
+            ("Cerebras", self.cerebras_api_key_var, "Not set"),
+            ("Gemini", self.gemini_api_key_var, "Not set"),
+            ("Custom", self.custom_api_key_var, "Not set"),
         ]
         for label, var, placeholder in rows:
             row = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
@@ -285,11 +409,21 @@ class APISection:
 
             label_row = ctk.CTkFrame(row, fg_color="transparent", corner_radius=0)
             label_row.pack(fill="x", pady=(0, 4))
-            ctk.CTkLabel(label_row, text=label, font=FONT_SM, text_color=C_TEXT2,
-                         fg_color="transparent", anchor="w").pack(side="left")
+            ctk.CTkLabel(
+                label_row,
+                text=label,
+                font=FONT_SM,
+                text_color=C_TEXT2,
+                fg_color="transparent",
+                anchor="w",
+            ).pack(side="left")
             badge = ctk.CTkLabel(
-                label_row, text=" SET ", font=("Segoe UI", 10, "bold"),
-                text_color=C_ACCENT2, fg_color=C_ACCENT_DIM, corner_radius=999,
+                label_row,
+                text=" SET ",
+                font=("Segoe UI", 10, "bold"),
+                text_color=C_ACCENT2,
+                fg_color=C_ACCENT_DIM,
+                corner_radius=999,
             )
             self._key_badges[str(var)] = (var, badge)
             var.trace_add("write", lambda *_a, v=var: self._refresh_key_badge(v))
@@ -297,23 +431,38 @@ class APISection:
             entry_row = ctk.CTkFrame(row, fg_color="transparent", corner_radius=0)
             entry_row.pack(fill="x")
             entry = ctk.CTkEntry(
-                entry_row, textvariable=var, show="*",
-                font=("Consolas", 10), placeholder_text=placeholder,
-                fg_color=C_INPUT, border_color=C_BORDER, text_color=C_TEXT,
-                height=33, corner_radius=7,
+                entry_row,
+                textvariable=var,
+                show="*",
+                font=("Consolas", 10),
+                placeholder_text=placeholder,
+                fg_color=C_INPUT,
+                border_color=C_BORDER,
+                text_color=C_TEXT,
+                height=33,
+                corner_radius=7,
             )
             entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
             def _make_toggle(e=entry):
                 def toggle():
                     e.configure(show="" if e.cget("show") == "*" else "*")
+
                 return toggle
 
             ctk.CTkButton(
-                entry_row, text="Show", command=_make_toggle(),
-                width=56, height=33, corner_radius=7, font=FONT_SM,
-                fg_color=C_SURFACE, text_color=C_TEXT2,
-                hover_color=C_SURFACE2, border_width=1, border_color=C_BORDER,
+                entry_row,
+                text="Show",
+                command=_make_toggle(),
+                width=56,
+                height=33,
+                corner_radius=7,
+                font=FONT_SM,
+                fg_color=C_SURFACE,
+                text_color=C_TEXT2,
+                hover_color=C_SURFACE2,
+                border_width=1,
+                border_color=C_BORDER,
             ).pack(side="left")
 
     @property
@@ -345,7 +494,11 @@ class APISection:
             self.refinement_provider_combo.configure(state=state)
         if self.refinement_model_combo:
             self.refinement_model_combo.configure(state=state)
-        for child in (self._custom_ref_section.winfo_children() if self._custom_ref_section else []):
+        for child in (
+            self._custom_ref_section.winfo_children()
+            if self._custom_ref_section
+            else []
+        ):
             if isinstance(child, ctk.CTkEntry):
                 child.configure(state="normal" if enabled else "disabled")
 
@@ -381,10 +534,14 @@ class APISection:
     def _on_stt_model_changed(self):
         p = self.stt_provider_var.get()
         m = self.stt_model_var.get()
-        if p == "openai":      self.openai_stt_model   = m
-        elif p == "deepgram":  self.deepgram_stt_model  = m
-        elif p == "parakeet":  self.parakeet_stt_model  = m
-        elif p == "custom":    self.custom_stt_model    = m
+        if p == "openai":
+            self.openai_stt_model = m
+        elif p == "deepgram":
+            self.deepgram_stt_model = m
+        elif p == "parakeet":
+            self.parakeet_stt_model = m
+        elif p == "custom":
+            self.custom_stt_model = m
 
     def _on_refinement_provider_changed(self):
         self._update_refinement_model_options()
@@ -395,10 +552,14 @@ class APISection:
     def _on_refinement_model_changed(self):
         p = self.refinement_provider_var.get()
         m = self.refinement_model_var.get()
-        if p == "openai":      self.openai_refinement_model   = m
-        elif p == "cerebras":  self.cerebras_refinement_model = m
-        elif p == "gemini":    self.gemini_refinement_model   = m
-        elif p == "custom":    self.custom_refinement_model   = m
+        if p == "openai":
+            self.openai_refinement_model = m
+        elif p == "cerebras":
+            self.cerebras_refinement_model = m
+        elif p == "gemini":
+            self.gemini_refinement_model = m
+        elif p == "custom":
+            self.custom_refinement_model = m
 
     def _update_stt_model_options(self):
         if not self.stt_model_combo:
@@ -406,25 +567,26 @@ class APISection:
         p = self.stt_provider_var.get()
         cur = self.stt_model_var.get()
 
-        openai  = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
-        deepgram = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
-        parakeet = ["parakeet-tdt-0.6b-v2"]
-        custom  = ["whisper-1", "whisper-large-v3", "Systran/faster-whisper-large-v3"]
-
-        if cur in openai:   self.openai_stt_model   = cur
-        elif cur in deepgram: self.deepgram_stt_model = cur
-        elif cur in parakeet: self.parakeet_stt_model = cur
-        elif cur in custom:   self.custom_stt_model   = cur
+        if cur in stt_models("openai"):
+            self.openai_stt_model = cur
+        elif cur in stt_models("deepgram"):
+            self.deepgram_stt_model = cur
+        elif cur in stt_models("parakeet"):
+            self.parakeet_stt_model = cur
+        elif cur in stt_models("custom"):
+            self.custom_stt_model = cur
 
         models_map = {
-            "openai": (openai, self.openai_stt_model),
-            "deepgram": (deepgram, self.deepgram_stt_model),
-            "parakeet": (parakeet, self.parakeet_stt_model),
-            "custom": (custom, self.custom_stt_model),
+            "openai": (stt_models("openai"), self.openai_stt_model),
+            "deepgram": (stt_models("deepgram"), self.deepgram_stt_model),
+            "parakeet": (stt_models("parakeet"), self.parakeet_stt_model),
+            "custom": (stt_models("custom"), self.custom_stt_model),
         }
         models, remembered = models_map.get(p, ([], ""))
         self.stt_model_combo.configure(values=models)
-        self.stt_model_var.set(remembered if remembered in models else (models[0] if models else ""))
+        self.stt_model_var.set(
+            remembered if remembered in models else (models[0] if models else "")
+        )
 
     def _update_refinement_model_options(self):
         if not self.refinement_model_combo:
@@ -432,54 +594,40 @@ class APISection:
         p = self.refinement_provider_var.get()
         cur = self.refinement_model_var.get()
 
-        openai   = ["gpt-5", "gpt-5-mini", "gpt-5-nano",
-                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini", "gpt-4o"]
-        cerebras = ["llama-3.3-70b", "qwen-3-235b-a22b-instruct-2507",
-                    "qwen-3-32b", "llama3.1-8b", "gpt-oss-120b"]
-        gemini   = ["gemini-3-flash-preview", "gemini-3-pro-preview",
-                    "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-06-05"]
-        custom   = ["llama3", "mistral", "mixtral", "gemma"]
-
-        if cur in openai:   self.openai_refinement_model   = cur
-        elif cur in cerebras: self.cerebras_refinement_model = cur
-        elif cur in gemini:   self.gemini_refinement_model   = cur
-        elif cur in custom:   self.custom_refinement_model   = cur
+        if cur in refinement_models("openai"):
+            self.openai_refinement_model = cur
+        elif cur in refinement_models("cerebras"):
+            self.cerebras_refinement_model = cur
+        elif cur in refinement_models("gemini"):
+            self.gemini_refinement_model = cur
+        elif cur in refinement_models("custom"):
+            self.custom_refinement_model = cur
 
         models_map = {
-            "openai":   (openai,   self.openai_refinement_model),
-            "cerebras": (cerebras, self.cerebras_refinement_model),
-            "gemini":   (gemini,   self.gemini_refinement_model),
-            "custom":   (custom,   self.custom_refinement_model),
+            "openai": (refinement_models("openai"), self.openai_refinement_model),
+            "cerebras": (
+                refinement_models("cerebras"),
+                self.cerebras_refinement_model,
+            ),
+            "gemini": (refinement_models("gemini"), self.gemini_refinement_model),
+            "custom": (refinement_models("custom"), self.custom_refinement_model),
         }
         models, remembered = models_map.get(p, ([], ""))
         self.refinement_model_combo.configure(values=models)
-        self.refinement_model_var.set(remembered if remembered in models else (models[0] if models else ""))
+        self.refinement_model_var.set(
+            remembered if remembered in models else (models[0] if models else "")
+        )
 
     # ── Combobox options only (used by set_values) ────────────────────────────
 
     def _update_combobox_options_only(self):
         if self.stt_model_combo:
             p = self.stt_provider_var.get()
-            models = {
-                "openai":   ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
-                "deepgram": ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"],
-                "parakeet": ["parakeet-tdt-0.6b-v2"],
-                "custom":   ["whisper-1", "whisper-large-v3", "Systran/faster-whisper-large-v3"],
-            }.get(p, [])
-            self.stt_model_combo.configure(values=models)
+            self.stt_model_combo.configure(values=stt_models(p))
 
         if self.refinement_model_combo:
             p = self.refinement_provider_var.get()
-            models = {
-                "openai":   ["gpt-5", "gpt-5-mini", "gpt-5-nano",
-                             "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini", "gpt-4o"],
-                "cerebras": ["llama-3.3-70b", "qwen-3-235b-a22b-instruct-2507",
-                             "qwen-3-32b", "llama3.1-8b"],
-                "gemini":   ["gemini-3-flash-preview", "gemini-3-pro-preview",
-                             "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-06-05"],
-                "custom":   ["llama3", "mistral", "mixtral", "gemma"],
-            }.get(p, [])
-            self.refinement_model_combo.configure(values=models)
+            self.refinement_model_combo.configure(values=refinement_models(p))
 
     # ── Public interface ───────────────────────────────────────────────────────
 
@@ -507,12 +655,23 @@ class APISection:
 
     def set_values(
         self,
-        stt_provider, openai_api_key, deepgram_api_key, cerebras_api_key,
-        gemini_api_key, custom_api_key, stt_model, refinement_provider,
-        refinement_model, custom_endpoint="", custom_stt_endpoint="",
-        custom_refinement_endpoint="", parakeet_endpoint="http://localhost:8000",
-        parakeet_streaming_enabled=False, parakeet_streaming_vad_end_silence_ms=250,
-        parakeet_streaming_max_chunk_seconds=8.0, parakeet_streaming_batch_size=4,
+        stt_provider,
+        openai_api_key,
+        deepgram_api_key,
+        cerebras_api_key,
+        gemini_api_key,
+        custom_api_key,
+        stt_model,
+        refinement_provider,
+        refinement_model,
+        custom_endpoint="",
+        custom_stt_endpoint="",
+        custom_refinement_endpoint="",
+        parakeet_endpoint="http://localhost:8000",
+        parakeet_streaming_enabled=False,
+        parakeet_streaming_vad_end_silence_ms=250,
+        parakeet_streaming_max_chunk_seconds=8.0,
+        parakeet_streaming_batch_size=4,
         parakeet_streaming_batch_window_ms=15,
     ):
         self.openai_api_key_var.set(openai_api_key)
@@ -522,23 +681,39 @@ class APISection:
         self.custom_api_key_var.set(custom_api_key)
         self.custom_endpoint_var.set(custom_endpoint)
         self.custom_stt_endpoint_var.set(custom_stt_endpoint or custom_endpoint)
-        self.custom_refinement_endpoint_var.set(custom_refinement_endpoint or custom_endpoint)
+        self.custom_refinement_endpoint_var.set(
+            custom_refinement_endpoint or custom_endpoint
+        )
         self.parakeet_endpoint_var.set(parakeet_endpoint or "http://localhost:8000")
         self.parakeet_streaming_enabled_var.set(parakeet_streaming_enabled)
-        self.parakeet_streaming_vad_end_silence_ms_var.set(str(parakeet_streaming_vad_end_silence_ms))
-        self.parakeet_streaming_max_chunk_seconds_var.set(str(parakeet_streaming_max_chunk_seconds))
+        self.parakeet_streaming_vad_end_silence_ms_var.set(
+            str(parakeet_streaming_vad_end_silence_ms)
+        )
+        self.parakeet_streaming_max_chunk_seconds_var.set(
+            str(parakeet_streaming_max_chunk_seconds)
+        )
         self.parakeet_streaming_batch_size_var.set(str(parakeet_streaming_batch_size))
-        self.parakeet_streaming_batch_window_ms_var.set(str(parakeet_streaming_batch_window_ms))
+        self.parakeet_streaming_batch_window_ms_var.set(
+            str(parakeet_streaming_batch_window_ms)
+        )
 
-        if stt_provider == "openai":     self.openai_stt_model   = stt_model
-        elif stt_provider == "deepgram": self.deepgram_stt_model  = stt_model
-        elif stt_provider == "parakeet": self.parakeet_stt_model  = stt_model
-        elif stt_provider == "custom":   self.custom_stt_model    = stt_model
+        if stt_provider == "openai":
+            self.openai_stt_model = stt_model
+        elif stt_provider == "deepgram":
+            self.deepgram_stt_model = stt_model
+        elif stt_provider == "parakeet":
+            self.parakeet_stt_model = stt_model
+        elif stt_provider == "custom":
+            self.custom_stt_model = stt_model
 
-        if refinement_provider == "openai":     self.openai_refinement_model   = refinement_model
-        elif refinement_provider == "cerebras": self.cerebras_refinement_model = refinement_model
-        elif refinement_provider == "gemini":   self.gemini_refinement_model   = refinement_model
-        elif refinement_provider == "custom":   self.custom_refinement_model   = refinement_model
+        if refinement_provider == "openai":
+            self.openai_refinement_model = refinement_model
+        elif refinement_provider == "cerebras":
+            self.cerebras_refinement_model = refinement_model
+        elif refinement_provider == "gemini":
+            self.gemini_refinement_model = refinement_model
+        elif refinement_provider == "custom":
+            self.custom_refinement_model = refinement_model
 
         self.stt_provider_var.set(stt_provider)
         self.refinement_provider_var.set(refinement_provider)
@@ -564,16 +739,36 @@ class APISection:
             lines.append(f"\n{marker} {name}{sel}:")
             lines.append(f"  Status: {status}")
 
-        _check(v["openai_api_key"],   validate_openai_api_key,   "OpenAI",
-               "Selected STT" if v["stt_provider"] == "openai" else "")
-        _check(v["deepgram_api_key"], validate_deepgram_api_key, "Deepgram",
-               "Selected STT" if v["stt_provider"] == "deepgram" else "")
-        _check(v["cerebras_api_key"], validate_cerebras_api_key, "Cerebras",
-               "Selected Refinement" if v["refinement_provider"] == "cerebras" else "")
-        _check(v["gemini_api_key"],   validate_gemini_api_key,   "Gemini",
-               "Selected Refinement" if v["refinement_provider"] == "gemini" else "")
+        _check(
+            v["openai_api_key"],
+            validate_openai_api_key,
+            "OpenAI",
+            "Selected STT" if v["stt_provider"] == "openai" else "",
+        )
+        _check(
+            v["deepgram_api_key"],
+            validate_deepgram_api_key,
+            "Deepgram",
+            "Selected STT" if v["stt_provider"] == "deepgram" else "",
+        )
+        _check(
+            v["cerebras_api_key"],
+            validate_cerebras_api_key,
+            "Cerebras",
+            "Selected Refinement" if v["refinement_provider"] == "cerebras" else "",
+        )
+        _check(
+            v["gemini_api_key"],
+            validate_gemini_api_key,
+            "Gemini",
+            "Selected Refinement" if v["refinement_provider"] == "gemini" else "",
+        )
 
-        if v["custom_api_key"] or v["custom_stt_endpoint"] or v["custom_refinement_endpoint"]:
+        if (
+            v["custom_api_key"]
+            or v["custom_stt_endpoint"]
+            or v["custom_refinement_endpoint"]
+        ):
             lines.append("\n[ ] Custom:\n  Status: Configured (not validated)")
         else:
             lines.append("\n[ ] Custom:\n  Status: Not configured")

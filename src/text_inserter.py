@@ -1,6 +1,7 @@
 import time
 from loguru import logger
 import sys
+import threading
 from typing import Optional
 
 import pyperclip
@@ -21,6 +22,7 @@ class TextInserter:
         """Initialize the text inserter."""
         self.insertion_delay = self.DEFAULT_INSERTION_DELAY
         self.keyboard = keyboard.Controller()
+        self._insert_lock = threading.Lock()
 
     def insert_text(self, text: str) -> bool:
         """
@@ -36,17 +38,33 @@ class TextInserter:
             logger.warning("Empty text provided for insertion")
             return False
 
-        try:
-            return self._insert_via_clipboard(text)
-        except TextInsertionError:
-            # Re-raise TextInsertionError as-is
-            raise
-        except Exception as e:
-            logger.error(f"Text insertion failed: {e}")
-            raise TextInsertionError(f"Failed to insert text: {e}") from e
+        with self._insert_lock:
+            try:
+                return self._insert_via_clipboard(text)
+            except TextInsertionError:
+                # Re-raise TextInsertionError as-is
+                raise
+            except Exception as e:
+                logger.error(f"Text insertion failed: {e}")
+                raise TextInsertionError(f"Failed to insert text: {e}") from e
 
     def insert_space(self) -> bool:
         """Insert a single literal space with the keyboard."""
+        with self._insert_lock:
+            return self._insert_space_unlocked()
+
+    def insert_space_then_text(self, text: str) -> bool:
+        """Insert a space keypress followed by clipboard text as one operation."""
+        if not text:
+            logger.warning("Empty text provided for insertion")
+            return False
+
+        with self._insert_lock:
+            self._insert_space_unlocked()
+            return self._insert_via_clipboard(text)
+
+    def _insert_space_unlocked(self) -> bool:
+        """Insert a single literal space; caller must hold the insertion lock."""
         try:
             self.keyboard.press(keyboard.Key.space)
             self.keyboard.release(keyboard.Key.space)

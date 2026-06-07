@@ -3,6 +3,7 @@ from src.transcription_base import TranscriberBase
 from src.transcription_openai import OpenAITranscriber
 from src.transcription_deepgram import DeepgramTranscriber
 from src.transcription_parakeet import ParakeetTranscriber
+from src.provider_registry import stt_provider_names
 
 
 class TranscriberFactory:
@@ -45,7 +46,11 @@ class TranscriberFactory:
                 base_url=base_url,
             )
         else:
-            raise ValueError(f"Unknown transcription provider: {provider}")
+            supported = ", ".join(stt_provider_names())
+            raise ValueError(
+                f"Unknown transcription provider: {provider}. "
+                f"Supported providers: {supported}"
+            )
 
         # Set glossary if provided
         if glossary:

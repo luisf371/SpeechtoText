@@ -35,13 +35,16 @@ class AudioRecorder:
         self.recording_thread: Optional[threading.Thread] = None
         self.chunk_callback: Callable[[bytes], None] | None = None
         self.store_audio_data = True
+        self._state_lock = threading.RLock()
 
         self.audio_interface = None
         self.stream = None
         self._init_error: Optional[Exception] = None
 
         # Initialize PyAudio in a background thread to avoid blocking startup
-        self._init_thread = threading.Thread(target=self._initialize_audio_interface, daemon=True)
+        self._init_thread = threading.Thread(
+            target=self._initialize_audio_interface, daemon=True
+        )
         self._init_thread.start()
 
     def _initialize_audio_interface(self):
@@ -59,50 +62,58 @@ class AudioRecorder:
         store_audio_data: bool = True,
     ) -> bool:
         """Start recording audio."""
-        if self.is_recording:
-            logger.warning("Recording is already in progress")
-            return False
-
-        # Ensure initialization is complete
-        if not self.audio_interface:
-            if self._init_thread and self._init_thread.is_alive():
-                logger.info("Waiting for audio interface initialization...")
-                self._init_thread.join(timeout=5.0)
-
-            if self._init_error:
-                logger.error(f"Cannot start recording, initialization failed: {self._init_error}")
+        with self._state_lock:
+            if self.is_recording:
+                logger.warning("Recording is already in progress")
                 return False
 
+            # Ensure initialization is complete
             if not self.audio_interface:
-                logger.error("Audio interface not initialized")
+                if self._init_thread and self._init_thread.is_alive():
+                    logger.info("Waiting for audio interface initialization...")
+                    self._init_thread.join(timeout=5.0)
+
+                if self._init_error:
+                    logger.error(
+                        "Cannot start recording, initialization failed: "
+                        f"{self._init_error}"
+                    )
+                    return False
+
+                if not self.audio_interface:
+                    logger.error("Audio interface not initialized")
+                    return False
+
+            try:
+                self.stream = self.audio_interface.open(
+                    format=self.audio_format,
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    input=True,
+                    frames_per_buffer=self.chunk_size,
+                )
+
+                self.is_recording = True
+                self.audio_data = []
+                self.chunk_callback = chunk_callback
+                self.store_audio_data = store_audio_data
+
+                self.recording_thread = threading.Thread(
+                    target=self._record_audio,
+                    name="AudioRecorder",
+                )
+                self.recording_thread.start()
+
+                logger.info("Audio recording started")
+                return True
+
+            except Exception as e:
+                logger.error(f"Failed to start recording: {e}")
+                self.is_recording = False
+                self.chunk_callback = None
+                self.store_audio_data = True
+                self._cleanup_stream()
                 return False
-
-        try:
-            self.stream = self.audio_interface.open(
-                format=self.audio_format,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                frames_per_buffer=self.chunk_size,
-            )
-
-            self.is_recording = True
-            self.audio_data = []
-            self.chunk_callback = chunk_callback
-            self.store_audio_data = store_audio_data
-
-            self.recording_thread = threading.Thread(target=self._record_audio)
-            self.recording_thread.start()
-
-            logger.info("Audio recording started")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to start recording: {e}")
-            self.chunk_callback = None
-            self.store_audio_data = True
-            self._cleanup_stream()
-            return False
 
     def stop_recording(self) -> Optional[str]:
         """
@@ -111,18 +122,21 @@ class AudioRecorder:
         Returns:
             Path to the temporary audio file, or None if recording failed
         """
-        if not self.is_recording:
-            logger.warning("No recording in progress")
-            return None
+        with self._state_lock:
+            if not self.is_recording:
+                logger.warning("No recording in progress")
+                return None
 
-        self.is_recording = False
+            self.is_recording = False
+            recording_thread = self.recording_thread
 
         # Wait for recording thread to finish
-        if self.recording_thread:
-            self.recording_thread.join(timeout=AUDIO_RECORDING_THREAD_TIMEOUT_SECONDS)
+        if recording_thread:
+            recording_thread.join(timeout=AUDIO_RECORDING_THREAD_TIMEOUT_SECONDS)
 
-        self.chunk_callback = None
-        self.store_audio_data = True
+        with self._state_lock:
+            self.chunk_callback = None
+            self.store_audio_data = True
 
         # Get sample width before cleanup
         sample_width = None
@@ -173,15 +187,23 @@ class AudioRecorder:
     def _record_audio(self):
         """Internal method to record audio in a separate thread."""
         try:
-            while self.is_recording and self.stream:
-                data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+            while True:
+                with self._state_lock:
+                    if not self.is_recording or not self.stream:
+                        break
+                    stream = self.stream
+                    store_audio_data = self.store_audio_data
+                    chunk_callback = self.chunk_callback
+
+                data = stream.read(self.chunk_size, exception_on_overflow=False)
                 if isinstance(data, (bytes, bytearray)):
                     chunk = bytes(data)
-                    if self.store_audio_data:
-                        self.audio_data.append(chunk)
-                    if self.chunk_callback:
+                    if store_audio_data:
+                        with self._state_lock:
+                            self.audio_data.append(chunk)
+                    if chunk_callback:
                         try:
-                            self.chunk_callback(chunk)
+                            chunk_callback(chunk)
                         except Exception as callback_error:
                             logger.error(
                                 f"Audio chunk callback failed: {callback_error}"
@@ -193,7 +215,8 @@ class AudioRecorder:
                     )
         except Exception as e:
             logger.error(f"Error during recording: {e}")
-            self.is_recording = False
+            with self._state_lock:
+                self.is_recording = False
 
     def _cleanup_stream(self):
         """Clean up audio stream resources."""
@@ -208,6 +231,8 @@ class AudioRecorder:
 
     def shutdown(self):
         """Terminate audio interface."""
+        with self._state_lock:
+            self.is_recording = False
         self._cleanup_stream()
 
         # Ensure init thread is done if we are shutting down

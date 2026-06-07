@@ -2,7 +2,6 @@ import pytest
 import sys
 import tkinter as tk
 from loguru import logger
-from unittest.mock import MagicMock
 
 
 # Configure loguru for tests
@@ -134,9 +133,13 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
         config.streaming_boundary_space_keypress,
     )
 
-    gui.glossary_section = mock_gui_sections["glossary"](root, root, config.custom_glossary)
+    gui.glossary_section = mock_gui_sections["glossary"](
+        root, root, config.custom_glossary
+    )
 
-    gui.prompt_section = mock_gui_sections["prompt"](root, root, config.custom_refinement_prompt)
+    gui.prompt_section = mock_gui_sections["prompt"](
+        root, root, config.custom_refinement_prompt
+    )
     # Store the prompt value and mock get_prompt/set_prompt to use it
     gui.prompt_section._stored_prompt = config.custom_refinement_prompt
     gui.prompt_section.get_prompt = lambda: gui.prompt_section._stored_prompt

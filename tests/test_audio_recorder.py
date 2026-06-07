@@ -2,10 +2,8 @@ import pytest
 import threading
 from loguru import logger
 from unittest.mock import MagicMock
-import time
 
 from src.audio_recorder import AudioRecorder
-from src.exceptions import AudioRecordingError
 
 
 class TestAudioRecorder:

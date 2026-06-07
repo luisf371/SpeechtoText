@@ -142,11 +142,13 @@ The application features a sophisticated real-time configuration system that app
 - **API Key Change**: Update OpenAI key → Only transcription/refinement components reinitialize
 
 ### Speech-to-Text Settings
-- **STT Provider Selection**: Choose between OpenAI or Deepgram (default: Deepgram)
-- **API Key**: Secure entry with show/hide functionality (dynamically shows OpenAI or Deepgram field based on provider)
+- **STT Provider Selection**: Choose between OpenAI, Deepgram, Parakeet, or Custom (default: Deepgram)
+- **API Key / Endpoint**: Secure key entry plus provider-specific endpoint fields for local/custom services
 - **Model Selection**: Choose provider-specific models:
   - **OpenAI**: whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe
   - **Deepgram**: nova-3 (default and recommended), nova-2, base, enhanced, whisper-medium
+  - **Parakeet**: parakeet-tdt-0.6b-v2
+  - **Custom**: whisper-1, whisper-large-v3, Systran/faster-whisper-large-v3
 
 ### Text Refinement Settings
 - **Refinement Provider**: Choose between OpenAI, Cerebras, Gemini, or Custom (default: Cerebras)
@@ -205,8 +207,8 @@ The application supports three ways to provide API keys (checked in this order):
 3. **Configuration File**: Manually edit `push_to_talk_config.json`
 
 The required API key depends on your selected providers:
-- **STT Provider**: OpenAI requires `openai_api_key`, Deepgram requires `deepgram_api_key`
-- **Refinement Provider**: OpenAI requires `openai_api_key`, Cerebras requires `cerebras_api_key`, Gemini requires `gemini_api_key`, Custom requires `custom_api_key`
+- **STT Provider**: OpenAI requires `openai_api_key`, Deepgram requires `deepgram_api_key`, Parakeet requires `parakeet_endpoint`, and Custom requires `custom_stt_endpoint`
+- **Refinement Provider**: OpenAI requires `openai_api_key`, Cerebras requires `cerebras_api_key`, Gemini requires `gemini_api_key`, and Custom requires `custom_refinement_endpoint`
 
 Environment variables are checked automatically if GUI or config file values are empty.
 
@@ -232,6 +234,15 @@ The application creates a `push_to_talk_config.json` file. Example configuration
   "gemini_api_key": "",
   "custom_api_key": "",
   "custom_endpoint": "",
+  "custom_stt_endpoint": "",
+  "parakeet_endpoint": "http://localhost:8000",
+  "parakeet_streaming_enabled": false,
+  "parakeet_streaming_vad_end_silence_ms": 250,
+  "parakeet_streaming_max_chunk_seconds": 8.0,
+  "parakeet_streaming_batch_size": 4,
+  "parakeet_streaming_batch_window_ms": 15,
+  "parakeet_rest_auto_stop_seconds": 120.0,
+  "custom_refinement_endpoint": "",
   "sample_rate": 16000,
   "chunk_size": 1024,
   "channels": 1,
@@ -240,6 +251,7 @@ The application creates a `push_to_talk_config.json` file. Example configuration
   "enable_text_refinement": true,
   "enable_logging": true,
   "enable_audio_feedback": true,
+  "streaming_boundary_space_keypress": true,
   "debug_mode": false,
   "custom_glossary": ["API", "OAuth", "microservices", "PostgreSQL"],
   "custom_refinement_prompt": ""
@@ -250,16 +262,25 @@ The application creates a `push_to_talk_config.json` file. Example configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `stt_provider` | string | `"deepgram"` | Speech-to-text provider. Options: `openai`, `deepgram`. Determines which transcription service to use. |
+| `stt_provider` | string | `"deepgram"` | Speech-to-text provider. Options: `openai`, `deepgram`, `parakeet`, `custom`. Determines which transcription service to use. |
 | `openai_api_key` | string | `""` | Your OpenAI API key for Whisper services. Required when using OpenAI provider. Can be set via GUI, config file, or `OPENAI_API_KEY` environment variable. |
 | `deepgram_api_key` | string | `""` | Your Deepgram API key for transcription services. Required when using Deepgram provider. Can be set via GUI, config file, or `DEEPGRAM_API_KEY` environment variable. |
-| `stt_model` | string | `"nova-3"` | STT Model for speech-to-text. For OpenAI: `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`. For Deepgram: `nova-3`, `nova-2`, `base`, `enhanced`, `whisper-medium`. |
+| `stt_model` | string | `"nova-3"` | STT Model for speech-to-text. For OpenAI: `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`. For Deepgram: `nova-3`, `nova-2`, `base`, `enhanced`, `whisper-medium`. For Parakeet: `parakeet-tdt-0.6b-v2`. For Custom: `whisper-1`, `whisper-large-v3`, `Systran/faster-whisper-large-v3`. |
 | `refinement_provider` | string | `"cerebras"` | Text refinement provider. Options: `openai`, `cerebras`, `gemini`, `custom`. Determines which AI service refines transcribed text. |
 | `refinement_model` | string | `"llama-3.3-70b"` | Refinement Model for text refinement. For OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o-mini`, `gpt-4o`. For Cerebras: `llama-3.3-70b`, `qwen-3-235b-a22b-instruct-2507`, `qwen-3-32b`, `llama3.1-8b`, `gpt-oss-120b`. For Gemini: `gemini-3-flash-preview`, `gemini-3-pro-preview`, `gemini-2.5-flash-preview-05-20`, `gemini-2.5-pro-preview-06-05`. For Custom: any model name. |
 | `cerebras_api_key` | string | `""` | Your Cerebras API key for text refinement. Required when using Cerebras provider. Can be set via GUI, config file, or `CEREBRAS_API_KEY` environment variable. |
 | `gemini_api_key` | string | `""` | Your Google Gemini API key for text refinement. Required when using Gemini provider. Can be set via GUI, config file, or `GOOGLE_API_KEY` environment variable. |
-| `custom_api_key` | string | `""` | Your custom API key for text refinement. Required when using Custom provider. |
-| `custom_endpoint` | string | `""` | Custom API endpoint URL for OpenAI-compatible APIs (e.g., `http://localhost:11434/v1` for Ollama). Required when using Custom provider. |
+| `custom_api_key` | string | `""` | API key for custom OpenAI-compatible providers. Blank values use a local placeholder key at runtime. |
+| `custom_endpoint` | string | `""` | Legacy custom API endpoint fallback for older saved configs. Prefer `custom_stt_endpoint` and `custom_refinement_endpoint`. |
+| `custom_stt_endpoint` | string | `""` | Custom STT endpoint URL for OpenAI-compatible transcription APIs. Required when `stt_provider` is `custom`. |
+| `parakeet_endpoint` | string | `"http://localhost:8000"` | Parakeet service base URL or `/transcribe` URL. Required when `stt_provider` is `parakeet`. |
+| `parakeet_streaming_enabled` | boolean | `false` | Use Parakeet WebSocket streaming instead of REST transcription. Requires 16 kHz mono audio. |
+| `parakeet_streaming_vad_end_silence_ms` | integer | `250` | Parakeet streaming VAD trailing silence threshold in milliseconds. |
+| `parakeet_streaming_max_chunk_seconds` | number | `8.0` | Parakeet streaming maximum VAD chunk duration in seconds. |
+| `parakeet_streaming_batch_size` | integer | `4` | Parakeet streaming transcription micro-batch size. |
+| `parakeet_streaming_batch_window_ms` | integer | `15` | Parakeet streaming micro-batch gather window in milliseconds. |
+| `parakeet_rest_auto_stop_seconds` | number | `120.0` | Maximum Parakeet REST recording duration before graceful auto-stop. |
+| `custom_refinement_endpoint` | string | `""` | Custom refinement endpoint URL for OpenAI-compatible refinement APIs. Required when `refinement_provider` is `custom`. |
 | `sample_rate` | integer | `16000` | Audio sampling frequency in Hz. 16kHz is optimal for speech recognition. |
 | `chunk_size` | integer | `1024` | Audio buffer size in samples. Determines how much audio is read at once (affects latency vs performance). |
 | `channels` | integer | `1` | Number of audio channels. Use `1` for mono recording (recommended for speech). |
@@ -268,6 +289,7 @@ The application creates a `push_to_talk_config.json` file. Example configuration
 | `enable_text_refinement` | boolean | `true` | Whether to refine transcribed text using AI. Disable for faster processing without refinement. |
 | `enable_logging` | boolean | `true` | Whether to enable detailed logging to `push_to_talk.log` file using loguru. |
 | `enable_audio_feedback` | boolean | `true` | Whether to play audio cues when starting/stopping recording. Provides immediate feedback for hotkey interactions. |
+| `streaming_boundary_space_keypress` | boolean | `true` | In Parakeet streaming mode, press a real Space key before boundary chunks instead of pasting leading whitespace. |
 | `debug_mode` | boolean | `false` | Whether to enable debug mode. When enabled, recorded audio files are saved to timestamped debug directories (e.g., `debug_audio_20231215_143022_456/`) with recording metadata for troubleshooting. |
 | `custom_glossary` | array | `[]` | List of domain-specific terms, acronyms, and proper names to improve transcription accuracy. Terms are automatically included in text refinement prompts. |
 | `custom_refinement_prompt` | string | `""` | Custom system prompt for text refinement. Leave empty to use default prompts. Use `{custom_glossary}` placeholder to include glossary terms dynamically. |
@@ -293,12 +315,12 @@ The application creates a `push_to_talk_config.json` file. Example configuration
 You can configure different hotkey combinations for both modes. Platform-specific defaults ensure compatibility:
 
 **Push-to-talk hotkey** (hold to record):
-- Windows/Linux: `ctrl+shift+^` (default), `ctrl+alt+r`, `f12`
-- macOS: `cmd+shift+space` (default), `cmd+alt+r`, `f12`
+- Windows/Linux: `ctrl+space+^` (default), `ctrl+alt+r`, `f12`
+- macOS: `cmd+space+^` (default), `cmd+alt+r`, `f12`
 
 **Toggle hotkey** (press once to start, press again to stop):
-- Windows/Linux: `ctrl+shift+space` (default), `ctrl+shift+t`
-- macOS: `cmd+shift+^` (default), `cmd+shift+t`
+- Windows/Linux: `ctrl+cmd` (default), `ctrl+shift+t`
+- macOS: `cmd+cmd` (default), `cmd+shift+t`
 
 Both hotkeys support any combination from the `pynput` library. The application automatically uses platform-aware defaults based on your OS.
 

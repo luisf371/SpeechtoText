@@ -1,5 +1,4 @@
 import os
-import re
 import sys
 import time
 from loguru import logger
@@ -11,7 +10,9 @@ import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
+from src.audio_processing_service import AudioProcessingService
 from src.audio_recorder import AudioRecorder
+from src.config.file_io import write_json_atomic
 from src.transcriber_factory import TranscriberFactory
 from src.transcription_base import TranscriberBase
 from src.transcription_parakeet_streaming import (
@@ -28,16 +29,23 @@ from src.transcription_parakeet_streaming import (
 )
 from src.text_refiner_base import TextRefinerBase
 from src.text_refiner_factory import TextRefinerFactory
+from src.text_formatting import normalize_sentence_spacing as normalize_sentence_spacing
 from src.text_inserter import TextInserter
+from src.streaming_text_inserter import StreamingTextInserter
 from src.hotkey_service import HotkeyService
+from src.provider_registry import (
+    REFINEMENT_PROVIDERS,
+    STT_PROVIDERS,
+    default_refinement_model,
+    default_stt_model,
+    refinement_provider_names,
+    stt_provider_names,
+)
 from src.utils import play_start_feedback, play_stop_feedback
 from src.exceptions import (
     ConfigurationError,
-    TranscriptionError,
-    TextRefinementError,
-    TextInsertionError,
-    APIError,
 )
+
 
 def _get_default_hotkey() -> str:
     """Get platform-specific default hotkey."""
@@ -47,76 +55,6 @@ def _get_default_hotkey() -> str:
 def _get_default_toggle_hotkey() -> str:
     """Get platform-specific default toggle hotkey."""
     return f"{'cmd' if sys.platform == 'darwin' else 'ctrl'}+cmd"
-
-
-def normalize_sentence_spacing(text: str) -> str:
-    """Repair common transcription joins after sentence punctuation."""
-
-    def previous_token_starts_lowercase(index: int) -> bool:
-        token_match = re.search(r"[A-Za-z][A-Za-z0-9_-]*$", text[:index])
-        return bool(token_match and token_match.group(0)[0].islower())
-
-    def add_space(match: re.Match[str]) -> str:
-        punctuation = match.group(1)
-        letter = match.group(2)
-        previous_index = match.start() - 1
-        is_single_letter_period = (
-            punctuation == "."
-            and previous_index >= 0
-            and text[previous_index].isalpha()
-            and (previous_index == 0 or not text[previous_index - 1].isalnum())
-            and match.end() < len(text)
-            and text[match.end()] == "."
-        )
-        if is_single_letter_period:
-            return match.group(0)
-        if (
-            punctuation == "."
-            and letter.islower()
-            and previous_token_starts_lowercase(match.start())
-        ):
-            return match.group(0)
-        return f"{punctuation} {letter}"
-
-    return re.sub(r"([.!?])([A-Za-z])", add_space, text)
-
-
-def streaming_segment_separator(previous_char: str | None, text: str) -> str:
-    """Return the separator to paste before a finalized streaming segment."""
-    if previous_char is None or not text:
-        return ""
-    if previous_char.isspace():
-        return ""
-    if text[0] in ".,;:!?)]}'":
-        return ""
-    if previous_char in "([{/'-":
-        return ""
-    return " "
-
-
-def last_streaming_text_char(text: str) -> str | None:
-    """Return the last meaningful character from text inserted by streaming."""
-    stripped = text.rstrip()
-    if not stripped:
-        return None
-    return stripped[-1]
-
-
-def normalize_streaming_segment_text(text: str) -> str:
-    """Normalize a finalized streaming segment for insertion."""
-    return normalize_sentence_spacing(text.strip())
-
-
-def format_streaming_insert_segment(
-    text: str, previous_char: str | None
-) -> tuple[str, str, str | None]:
-    """Format a finalized streaming segment and return updated boundary state."""
-    text = normalize_streaming_segment_text(text)
-    if not text:
-        return "", "", previous_char
-
-    separator = streaming_segment_separator(previous_char, text)
-    return separator, text, last_streaming_text_char(text)
 
 
 class PushToTalkConfig(BaseModel):
@@ -131,7 +69,10 @@ class PushToTalkConfig(BaseModel):
     )
     openai_api_key: str = Field(default="", description="OpenAI API key")
     deepgram_api_key: str = Field(default="", description="Deepgram API key")
-    stt_model: str = Field(default="nova-3", description="STT model name")
+    stt_model: str = Field(
+        default_factory=lambda: default_stt_model("deepgram"),
+        description="STT model name",
+    )
 
     # Text refinement settings
     refinement_provider: str = Field(
@@ -139,7 +80,8 @@ class PushToTalkConfig(BaseModel):
         description="Text refinement provider: 'openai', 'cerebras', 'gemini', or 'custom'",
     )
     refinement_model: str = Field(
-        default="llama-3.3-70b", description="Model for text refinement"
+        default_factory=lambda: default_refinement_model("cerebras"),
+        description="Model for text refinement",
     )
     cerebras_api_key: str = Field(default="", description="Cerebras API key")
     gemini_api_key: str = Field(default="", description="Gemini API key")
@@ -232,19 +174,19 @@ class PushToTalkConfig(BaseModel):
     @classmethod
     def validate_stt_provider(cls, v: str) -> str:
         """Validate STT provider."""
-        if v not in ["openai", "deepgram", "parakeet", "custom"]:
-            raise ValueError(
-                f"stt_provider must be 'openai', 'deepgram', 'parakeet' or 'custom', got '{v}'"
-            )
+        if v not in STT_PROVIDERS:
+            supported = "', '".join(stt_provider_names())
+            raise ValueError(f"stt_provider must be one of '{supported}', got '{v}'")
         return v
 
     @field_validator("refinement_provider")
     @classmethod
     def validate_refinement_provider(cls, v: str) -> str:
         """Validate refinement provider."""
-        if v not in ["openai", "cerebras", "gemini", "custom"]:
+        if v not in REFINEMENT_PROVIDERS:
+            supported = "', '".join(refinement_provider_names())
             raise ValueError(
-                f"refinement_provider must be 'openai', 'cerebras', 'gemini' or 'custom', got '{v}'"
+                f"refinement_provider must be one of '{supported}', got '{v}'"
             )
         return v
 
@@ -273,8 +215,7 @@ class PushToTalkConfig(BaseModel):
 
     def save_to_file(self, filepath: str):
         """Save configuration to JSON file."""
-        with open(filepath, "w") as f:
-            f.write(self.model_dump_json(indent=2))
+        write_json_atomic(filepath, self.model_dump())
 
     @classmethod
     def load_from_file(cls, filepath: str) -> "PushToTalkConfig":
@@ -419,16 +360,19 @@ class PushToTalkApp:
         self.processing_threads = []
         self.processing_threads_lock = threading.Lock()
         self.streaming_session: Optional[ParakeetStreamingSession] = None
-        self.streaming_insert_queue: queue.Queue[str | None] = queue.Queue()
-        self.streaming_insert_thread: Optional[threading.Thread] = None
-        self.streaming_insert_lock = threading.Lock()
-        self.streaming_insert_last_char: str | None = None
         self.streaming_frame_buffer = bytearray()
         self.streaming_drain_thread: Optional[threading.Thread] = None
         self.rest_auto_stop_timer: Optional[threading.Timer] = None
+        self.streaming_text_inserter: Optional[StreamingTextInserter] = None
+        self.audio_processing_service: Optional[AudioProcessingService] = None
+        self.streaming_insert_queue: queue.Queue[str | None] = queue.Queue()
+        self.streaming_insert_thread: Optional[threading.Thread] = None
+        self.streaming_insert_last_char: str | None = None
 
         # Initialize all components (only creates components that are None)
         self._initialize_components()
+        self._initialize_streaming_text_inserter()
+        self._initialize_audio_processing_service()
 
         logger.info("PushToTalk application initialized")
 
@@ -505,6 +449,9 @@ class PushToTalkApp:
         # Initialize text inserter
         if recreate_text_inserter:
             self.text_inserter = self._create_default_text_inserter()
+        if self.streaming_text_inserter and self.text_inserter:
+            self.streaming_text_inserter.update_text_inserter(self.text_inserter)
+            self._sync_streaming_text_inserter_aliases()
 
         # Initialize hotkey service
         if recreate_hotkey_service:
@@ -519,6 +466,40 @@ class PushToTalkApp:
         # Restart hotkey service if it was running before and application is still running
         if hotkey_service_was_running and self.is_running:
             self.hotkey_service.start_service()
+
+    def _initialize_streaming_text_inserter(self) -> None:
+        """Create the service that serializes streaming text insertion."""
+        self.streaming_text_inserter = StreamingTextInserter(
+            self.text_inserter,
+            use_boundary_space_keypress=(
+                lambda: self.config.streaming_boundary_space_keypress
+            ),
+        )
+        self._sync_streaming_text_inserter_aliases()
+
+    def _sync_streaming_text_inserter_aliases(self) -> None:
+        """Expose legacy streaming insertion attributes for tests/callers."""
+        if not self.streaming_text_inserter:
+            return
+        self.streaming_insert_queue = self.streaming_text_inserter.queue
+        self.streaming_insert_thread = self.streaming_text_inserter.thread
+        self.streaming_insert_last_char = self.streaming_text_inserter.last_char
+
+    def _apply_streaming_text_inserter_aliases(self) -> None:
+        """Apply direct writes to legacy streaming insertion attributes."""
+        if not self.streaming_text_inserter:
+            return
+        if self.streaming_insert_last_char != self.streaming_text_inserter.last_char:
+            self.streaming_text_inserter.last_char = self.streaming_insert_last_char
+
+    def _initialize_audio_processing_service(self) -> None:
+        """Create the service that processes completed audio recordings."""
+        self.audio_processing_service = AudioProcessingService(
+            get_config=lambda: self.config,
+            get_transcriber=lambda: self.transcriber,
+            get_text_refiner=lambda: self.text_refiner,
+            get_text_inserter=lambda: self.text_inserter,
+        )
 
     def _create_default_audio_recorder(self) -> AudioRecorder:
         """Create default AudioRecorder instance from configuration."""
@@ -789,6 +770,7 @@ class PushToTalkApp:
         """Worker loop to process commands from the queue."""
         logger.info("Worker thread started")
         while True:
+            command = None
             try:
                 command = self.command_queue.get(timeout=0.5)
                 if command == "QUIT":
@@ -801,13 +783,14 @@ class PushToTalkApp:
                     self._do_stop_recording(auto_stop=True)
                 else:
                     logger.warning(f"Unknown command received: {command}")
-
-                self.command_queue.task_done()
             except queue.Empty:
                 if not self.is_running:
                     break
             except Exception as e:
                 logger.error(f"Error in worker loop: {e}")
+            finally:
+                if command is not None:
+                    self.command_queue.task_done()
 
     def _on_start_recording(self):
         """Callback for when recording starts (called from hotkey thread)."""
@@ -897,7 +880,10 @@ class PushToTalkApp:
     def _start_rest_auto_stop_timer(self):
         """Start a timer that gracefully stops long Parakeet REST recordings."""
         self._cancel_rest_auto_stop_timer()
-        if self.config.stt_provider != "parakeet" or self.config.parakeet_streaming_enabled:
+        if (
+            self.config.stt_provider != "parakeet"
+            or self.config.parakeet_streaming_enabled
+        ):
             return
 
         timer = threading.Timer(
@@ -935,6 +921,7 @@ class PushToTalkApp:
     def _start_parakeet_streaming_recording(self) -> bool:
         """Start recording and stream live PCM frames to Parakeet."""
         try:
+            self._apply_streaming_text_inserter_aliases()
             self._validate_parakeet_streaming_audio_settings()
             self._ensure_streaming_insert_worker()
             self._wait_for_streaming_drain()
@@ -970,7 +957,9 @@ class PushToTalkApp:
                 if os.path.exists(audio_file):
                     os.unlink(audio_file)
             except Exception as cleanup_error:
-                logger.warning(f"Error cleaning up streaming debug audio: {cleanup_error}")
+                logger.warning(
+                    f"Error cleaning up streaming debug audio: {cleanup_error}"
+                )
 
         logger.info("Parakeet WebSocket streaming recording stopped")
 
@@ -1065,14 +1054,8 @@ class PushToTalkApp:
 
     def _wait_for_streaming_insert_queue(self, timeout: float = 2.0):
         """Give prior streaming text inserts a bounded chance to finish."""
-        deadline = time.monotonic() + timeout
-        while getattr(self.streaming_insert_queue, "unfinished_tasks", 0):
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    "Timed out waiting for queued Parakeet streaming text insertion"
-                )
-                return
-            time.sleep(0.01)
+        self.streaming_text_inserter.wait_until_idle(timeout)
+        self._sync_streaming_text_inserter_aliases()
 
     def _close_streaming_session(self):
         """Close the active streaming session if one exists."""
@@ -1089,206 +1072,37 @@ class PushToTalkApp:
 
     def _ensure_streaming_insert_worker(self):
         """Start the single-consumer insert worker for streaming text segments."""
-        if self.streaming_insert_thread and self.streaming_insert_thread.is_alive():
-            return
-
-        self.streaming_insert_thread = threading.Thread(
-            target=self._streaming_insert_loop,
-            daemon=True,
-            name="StreamingTextInsert",
-        )
-        self.streaming_insert_thread.start()
+        self.streaming_text_inserter.start()
+        self._sync_streaming_text_inserter_aliases()
 
     def _stop_streaming_insert_worker(self):
         """Stop the streaming insert worker during app shutdown."""
-        if self.streaming_insert_thread and self.streaming_insert_thread.is_alive():
-            self.streaming_insert_queue.put(None)
-            self.streaming_insert_thread.join(timeout=2.0)
-        self.streaming_insert_thread = None
+        self.streaming_text_inserter.stop()
+        self._sync_streaming_text_inserter_aliases()
 
     def _enqueue_streaming_text(self, text: str):
         """Queue a finalized streaming segment for ordered insertion."""
-        if text.strip():
-            self.streaming_insert_queue.put(text)
+        self.streaming_text_inserter.enqueue(text)
+        self._sync_streaming_text_inserter_aliases()
 
     def _format_streaming_insert_segment(self, text: str) -> str:
         """Add a stable separator before streamed segments after the first one."""
-        separator, segment, _ = format_streaming_insert_segment(
-            text, self.streaming_insert_last_char
-        )
-        return f"{separator}{segment}"
+        self._apply_streaming_text_inserter_aliases()
+        return self.streaming_text_inserter.format_segment(text)
 
     def _streaming_insert_loop(self):
         """Insert streaming text segments serially to avoid clipboard races."""
-        while True:
-            text = self.streaming_insert_queue.get()
-            if text is None:
-                self.streaming_insert_queue.task_done()
-                break
-
-            try:
-                with self.streaming_insert_lock:
-                    previous_last_char = self.streaming_insert_last_char
-                    separator, segment, next_last_char = format_streaming_insert_segment(
-                        text, previous_last_char
-                    )
-                    if not segment:
-                        success = True
-                        continue
-                    logger.debug(
-                        "Streaming insert segment: "
-                        f"raw={text!r}, separator={separator!r}, "
-                        f"segment={segment!r}, "
-                        f"previous_last_char={previous_last_char!r}, "
-                        f"next_last_char={next_last_char!r}"
-                    )
-                    success = True
-                    if separator:
-                        if self.config.streaming_boundary_space_keypress:
-                            success = self.text_inserter.insert_space()
-                        else:
-                            segment = f"{separator}{segment}"
-                    if success:
-                        success = self.text_inserter.insert_text(segment)
-                    if success:
-                        self.streaming_insert_last_char = next_last_char
-                if success:
-                    logger.info("Streaming text insertion successful")
-                else:
-                    logger.error("Streaming text insertion failed")
-            except TextInsertionError as e:
-                logger.error(f"Streaming text insertion failed: {e}")
-            finally:
-                self.streaming_insert_queue.task_done()
+        self._apply_streaming_text_inserter_aliases()
+        self.streaming_text_inserter.run()
+        self._sync_streaming_text_inserter_aliases()
 
     def _process_audio_background(self, audio_file: str):
-        """Process audio in background thread (transcribe, refine, insert).
-
-        This method runs in a separate daemon thread for each recording,
-        allowing new recordings to start immediately without waiting for
-        transcription/refinement to complete.
-
-        Args:
-            audio_file: Path to the recorded audio file
-        """
-        try:
-            logger.info(f"Processing audio file: {audio_file}")
-
-            # Save audio file in debug mode before processing
-            if self.config.debug_mode:
-                self._save_debug_audio(audio_file)
-
-            # Get active window info for logging
-            window_title = self.text_inserter.get_active_window_title()
-            if window_title:
-                logger.info(f"Target window: {window_title}")
-
-            # Transcribe audio (1-3 seconds, runs in background)
-            logger.info("Transcribing audio...")
-            try:
-                transcribed_text = self.transcriber.transcribe_audio(audio_file)
-                logger.info(f"Transcribed text: {transcribed_text}")
-            except (TranscriptionError, APIError) as e:
-                logger.error(f"Transcription failed: {e}")
-                transcribed_text = None
-
-            # Clean up temporary audio file
-            try:
-                if os.path.exists(audio_file):
-                    os.unlink(audio_file)
-                    logger.debug(f"Cleaned up audio file: {audio_file}")
-            except Exception as cleanup_error:
-                logger.warning(f"Error cleaning up audio file: {cleanup_error}")
-
-            if transcribed_text is None:
-                logger.warning("Transcribed text is None, skipping refinement")
-                return
-
-            # Refine text if enabled (1-2 seconds, runs in background)
-            final_text = transcribed_text
-            if self.text_refiner and self.config.is_text_refinement_effective():
-                logger.info("Refining transcribed text...")
-                try:
-                    refined_text = self.text_refiner.refine_text(transcribed_text)
-                    if refined_text:
-                        final_text = refined_text
-                        logger.info(f"Refined: {final_text}")
-                except (TextRefinementError, APIError) as e:
-                    logger.error(
-                        f"Text refinement failed, using original transcription: {e}"
-                    )
-                    final_text = transcribed_text
-
-            # Insert text into active window
-            logger.info("Inserting text into active window...")
-            try:
-                final_text = normalize_sentence_spacing(final_text)
-                success = self.text_inserter.insert_text(final_text)
-                if success:
-                    logger.info("Text insertion successful")
-                else:
-                    logger.error("Text insertion failed")
-            except TextInsertionError as e:
-                logger.error(f"Text insertion failed: {e}")
-
-        except Exception as e:
-            logger.error(f"Error processing audio in background: {e}")
-            # Clean up temporary audio file even on error
-            try:
-                if os.path.exists(audio_file):
-                    os.unlink(audio_file)
-                    logger.debug(f"Cleaned up audio file on error: {audio_file}")
-            except Exception as cleanup_error:
-                logger.error(
-                    f"Error cleaning up audio file {audio_file}: {cleanup_error}"
-                )
+        """Process audio in background thread (transcribe, refine, insert)."""
+        self.audio_processing_service.process_audio(audio_file)
 
     def _save_debug_audio(self, audio_file: str):
-        """
-        Save recorded audio file to debug directory when debug mode is enabled.
-
-        Args:
-            audio_file: Path to the recorded audio file
-        """
-        try:
-            import shutil
-            from datetime import datetime
-
-            # Create debug directory with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[
-                :-3
-            ]  # Remove last 3 digits of microseconds
-            debug_dir = f"debug_audio_{timestamp}"
-            os.makedirs(debug_dir, exist_ok=True)
-
-            # Copy audio file to debug directory
-            debug_audio_path = os.path.join(debug_dir, "recorded_audio.wav")
-            shutil.copy2(audio_file, debug_audio_path)
-
-            logger.info(f"Debug: Saved recorded audio to {debug_audio_path}")
-
-            # Create info file with recording details
-            info_path = os.path.join(debug_dir, "recording_info.txt")
-            with open(info_path, "w") as f:
-                f.write("Audio Recording Debug Information\n")
-                f.write(f"Timestamp: {timestamp}\n")
-                f.write("Settings:\n")
-                f.write(f"  Sample Rate: {self.config.sample_rate} Hz\n")
-                f.write(f"  Channels: {self.config.channels}\n")
-                f.write(f"  Chunk Size: {self.config.chunk_size}\n")
-                f.write("Configuration:\n")
-                f.write(f"  STT Model: {self.config.stt_model}\n")
-                f.write(
-                    f"  Text Refinement: {'Enabled' if self.config.enable_text_refinement else 'Disabled'}\n"
-                )
-                if self.config.enable_text_refinement:
-                    f.write(f"  Refinement Model: {self.config.refinement_model}\n")
-
-            logger.info(f"Debug: Saved recording info to {info_path}")
-            logger.info(f"Debug files saved to directory: {debug_dir}")
-
-        except Exception as e:
-            logger.error(f"Failed to save debug audio: {e}")
+        """Save recorded audio file to debug directory when debug mode is enabled."""
+        self.audio_processing_service.save_debug_audio(audio_file)
 
     def change_hotkey(self, new_hotkey: str) -> bool:
         """

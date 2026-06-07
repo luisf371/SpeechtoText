@@ -3,6 +3,7 @@
 import urllib.request
 import urllib.error
 from src.push_to_talk import PushToTalkConfig
+from src.provider_registry import STT_PROVIDERS
 
 
 def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
@@ -52,7 +53,7 @@ def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
                 "Custom STT provider requires an OpenAI-compatible endpoint URL!\n\n"
                 "Enter a URL such as http://localhost:8000/v1.",
             )
-    else:
+    elif config.stt_provider not in STT_PROVIDERS:
         return False, f"Unknown provider: {config.stt_provider}"
 
     # Check hotkeys are different
