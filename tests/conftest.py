@@ -30,62 +30,49 @@ def setup_test_environment():
 # === GUI Testing Fixtures ===
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_tk_root():
-    """Create a real Tk root for GUI tests that need Tkinter variables
+    """Create a single real Tk root shared across all GUI tests.
 
-    This creates an actual Tk root (withdrawn/hidden) to support
-    Tkinter variables (StringVar, IntVar, etc.) which require a root.
-    Falls back to mocking if Tk is unavailable (headless systems).
+    Session-scoped so only one Tk interpreter is created per process —
+    creating multiple tk.Tk() instances sequentially is unreliable and
+    causes sporadic skip/failure on the second and later tests.
 
     Returns:
-        tk.Tk or Mock: Real Tk root (withdrawn) or Mock if unavailable
+        tk.Tk: Real Tk root (withdrawn) shared for the session.
     """
     try:
         root = tk.Tk()
-        root.withdraw()  # Hide the window
-        # Set as default root for Tkinter variables
-        original_default = tk._default_root
-        tk._default_root = root
+        root.withdraw()
         yield root
-        # Cleanup
-        tk._default_root = original_default
         try:
             root.destroy()
         except Exception:
             pass
     except Exception:
-        # Fallback to mock for headless environments - skip the test
         pytest.skip("Cannot create Tk root window (headless environment)")
 
 
 @pytest.fixture
-def mock_gui_sections(mocker):
+def mock_gui_sections():
     """Create mocked GUI sections for testing
 
-    Mocks tkinter.ttk.LabelFrame to avoid creating actual Tk widgets.
-    Sections are created as real instances but with mocked frames.
-
     Returns:
-        dict: Dictionary of section name -> section instance
+        dict: Dictionary of section name -> section class
     """
     from src.gui.api_section import APISection
     from src.gui.hotkey_section import HotkeySection
     from src.gui.settings_section import FeatureFlagsSection
     from src.gui.glossary_section import GlossarySection
     from src.gui.prompt_section import PromptSection
-    from src.gui.status_section import StatusSection
 
-    mocker.patch("tkinter.ttk.LabelFrame")
-    sections = {
+    yield {
         "api": APISection,
         "hotkey": HotkeySection,
         "feature_flags": FeatureFlagsSection,
         "glossary": GlossarySection,
         "prompt": PromptSection,
-        "status": StatusSection,
     }
-    yield sections
 
 
 @pytest.fixture
@@ -113,8 +100,10 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
     gui = ConfigurationWindow(config, config_file_path="push_to_talk_config_test.json")
     gui.root = mock_tk_root
 
-    # Initialize sections with mocked frames
-    gui.api_section = mock_gui_sections["api"](MagicMock())
+    # Initialize sections with the real (withdrawn) Tk root as parent so CTk
+    # widget constructors get a valid Tk ancestor without opening a visible window.
+    root = mock_tk_root
+    gui.api_section = mock_gui_sections["api"](root, root, root)
     gui.api_section.set_values(
         config.stt_provider,
         config.openai_api_key,
@@ -130,13 +119,13 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
         config.custom_refinement_endpoint,
     )
 
-    gui.hotkey_section = mock_gui_sections["hotkey"](MagicMock())
+    gui.hotkey_section = mock_gui_sections["hotkey"](root)
     gui.hotkey_section.set_values(
         config.hotkey,
         config.toggle_hotkey,
     )
 
-    gui.feature_flags_section = mock_gui_sections["feature_flags"](MagicMock())
+    gui.feature_flags_section = mock_gui_sections["feature_flags"](root, root)
     gui.feature_flags_section.set_values(
         config.enable_text_refinement,
         config.enable_logging,
@@ -144,22 +133,14 @@ def prepared_config_gui(mock_tk_root, mock_gui_sections):
         config.debug_mode,
     )
 
-    gui.glossary_section = mock_gui_sections["glossary"](
-        MagicMock(), mock_tk_root, config.custom_glossary
-    )
+    gui.glossary_section = mock_gui_sections["glossary"](root, root, config.custom_glossary)
 
-    # For prompt_section, we need to mock the tk.Text widget behavior
-    # since it doesn't use StringVar like other sections
-    gui.prompt_section = mock_gui_sections["prompt"](
-        MagicMock(), mock_tk_root, config.custom_refinement_prompt
-    )
+    gui.prompt_section = mock_gui_sections["prompt"](root, root, config.custom_refinement_prompt)
     # Store the prompt value and mock get_prompt/set_prompt to use it
     gui.prompt_section._stored_prompt = config.custom_refinement_prompt
     gui.prompt_section.get_prompt = lambda: gui.prompt_section._stored_prompt
     gui.prompt_section.set_prompt = lambda p: setattr(
         gui.prompt_section, "_stored_prompt", p
     )
-
-    gui.status_section = mock_gui_sections["status"](MagicMock())
 
     return gui

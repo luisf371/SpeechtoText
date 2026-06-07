@@ -307,9 +307,9 @@ def test_custom_stt_provider_shows_endpoint_and_preserves_model(prepared_config_
     assert gui.api_section.stt_model_var.get() == "whisper-large-v3"
     assert gui.api_section.custom_stt_endpoint_var.get() == "http://localhost:8000/v1"
 
-    gui.api_section.custom_stt_endpoint_frame.grid = MagicMock()
+    gui.api_section.custom_stt_endpoint_frame.pack = MagicMock()
     gui.api_section._update_custom_endpoint_visibility()
-    gui.api_section.custom_stt_endpoint_frame.grid.assert_called_once()
+    gui.api_section.custom_stt_endpoint_frame.pack.assert_called_once()
 
     gui.api_section.stt_model_var.set("Systran/faster-whisper-large-v3")
     gui.api_section._on_stt_model_changed()

@@ -1,278 +1,234 @@
-"""Custom refinement prompt section for PushToTalk configuration GUI."""
+"""Custom refinement prompt section — CustomTkinter version."""
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 from typing import Callable
+import customtkinter as ctk
 
 from src.config.prompts import (
     text_refiner_prompt_w_glossary,
     text_refiner_prompt_wo_glossary,
 )
 
+C_WIN     = "#131519"
+C_INPUT   = "#0e1013"
+C_SURFACE = "#1b1e24"
+C_SURFACE2 = "#23272f"
+C_BORDER  = "#2a2f38"
+C_BORDER_S = "#21252c"
+C_TEXT    = "#e7e9ec"
+C_TEXT2   = "#9ba2ab"
+C_TEXT3   = "#6a717b"
+C_ACCENT  = "#f5a524"
+C_ACCENT2 = "#ffb454"
+
+FONT_SM   = ("Segoe UI", 13)
+FONT_BOLD = ("Segoe UI", 14, "bold")
+FONT_HEAD = ("Segoe UI", 11, "bold")
+FONT_MONO = ("Consolas", 13)
+
+
+def _subhead(parent, text: str):
+    """Uppercase section label + divider line."""
+    row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+    row.pack(fill="x", pady=(0, 10))
+    ctk.CTkLabel(
+        row, text=text.upper(), font=FONT_HEAD, text_color=C_TEXT3,
+        fg_color="transparent",
+    ).pack(side="left")
+    ctk.CTkFrame(row, fg_color=C_BORDER_S, height=1, corner_radius=0).pack(
+        side="left", fill="x", expand=True, padx=10
+    )
+    return row
+
 
 class PromptSection:
-    """Manages the custom refinement prompt configuration section."""
+    """Custom refinement prompt editor with char counter and default helpers."""
 
     def __init__(
         self,
-        parent: ttk.Widget,
-        root: tk.Tk,
+        parent,
+        root,
         initial_prompt: str = "",
         on_change: Callable[[], None] | None = None,
     ):
-        """
-        Initialize the prompt section.
-
-        Args:
-            parent: Parent widget to attach this section to
-            root: Root window (needed for dialogs)
-            initial_prompt: Initial custom prompt value
-            on_change: Callback called when prompt is modified
-        """
         self.root = root
         self.on_change = on_change
-        self._suspend_change_events = False
+        self._suspend = False
 
-        # Create the frame
-        self.frame = ttk.LabelFrame(parent, text="Custom Refinement Prompt", padding=10)
-        self.frame.pack(fill="x", pady=(0, 10))
+        self.frame = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+        self.frame.pack(fill="both", expand=True)
 
-        # Widgets
-        self.prompt_text = None
-        self.char_count_label = None
-        self._defaults_visible = None
-        self._defaults_frame = None
+        self.prompt_text: ctk.CTkTextbox | None = None
+        self.char_count_label: ctk.CTkLabel | None = None
+        self._defaults_frame: ctk.CTkFrame | None = None
+        self._defaults_visible = False
+        self._show_defaults_btn: ctk.CTkButton | None = None
 
         self._create_widgets()
-
-        # Set initial value
         if initial_prompt:
             self.set_prompt(initial_prompt)
 
     def _create_widgets(self):
-        """Create the prompt section widgets."""
-        # Description
-        description = ttk.Label(
-            self.frame,
-            text="Customize the system prompt used for text refinement. Leave empty to use the default.\n"
-            "Use {custom_glossary} placeholder to include your glossary terms.",
-            font=("TkDefaultFont", 9),
+        f = self.frame
+
+        _subhead(f, "Custom Prompt")
+
+        ctk.CTkLabel(
+            f,
+            text=(
+                "Leave empty to use the default prompt. "
+                "Use {custom_glossary} to inject your glossary terms."
+            ),
+            font=("Segoe UI", 12), text_color=C_TEXT3, fg_color="transparent",
+            justify="left", anchor="w", wraplength=440,
+        ).pack(anchor="w", pady=(0, 10))
+
+        self._defaults_frame = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+
+        # Prompt textarea
+        self.prompt_text = ctk.CTkTextbox(
+            f,
+            height=140,
+            font=FONT_MONO,
+            fg_color=C_INPUT,
+            border_color=C_BORDER,
+            text_color=C_TEXT,
+            scrollbar_button_color=C_SURFACE2,
+            scrollbar_button_hover_color=C_TEXT3,
+            corner_radius=7, border_width=1,
+            wrap="word",
         )
-        description.pack(fill="x", pady=(0, 10))
+        self.prompt_text.pack(fill="x", pady=(0, 4))
+        self.prompt_text.bind("<<Modified>>", self._on_modified)
+        # CTkTextbox fires <<Modified>> differently — also bind KeyRelease
+        self.prompt_text.bind("<KeyRelease>", self._on_modified)
 
-        # Collapsible default prompts reference
-        self._create_default_prompts_section()
-
-        # Custom prompt text area with scrollbar
-        text_frame = ttk.Frame(self.frame)
-        text_frame.pack(fill="both", expand=True, pady=(10, 5))
-
-        self.prompt_text = tk.Text(
-            text_frame,
-            height=10,
-            width=60,
-            wrap=tk.WORD,
-            font=("TkFixedFont", 9),
+        self.char_count_label = ctk.CTkLabel(
+            f, text="0 characters",
+            font=("Segoe UI", 11), text_color=C_TEXT3, fg_color="transparent",
+            anchor="w",
         )
-        scrollbar = ttk.Scrollbar(
-            text_frame, orient="vertical", command=self.prompt_text.yview
-        )
-        self.prompt_text.configure(yscrollcommand=scrollbar.set)
+        self.char_count_label.pack(anchor="w", pady=(0, 8))
 
-        self.prompt_text.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Action buttons
+        btn_row = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        btn_row.pack(anchor="w")
+        self._btn_row = btn_row
 
-        # Bind change events
-        self.prompt_text.bind("<<Modified>>", self._on_text_modified)
-
-        # Character count
-        self.char_count_label = ttk.Label(
-            self.frame,
-            text="0 characters",
-            font=("TkDefaultFont", 8),
-            foreground="gray",
-        )
-        self.char_count_label.pack(anchor="w", pady=(0, 5))
-
-        # Buttons
-        button_frame = ttk.Frame(self.frame)
-        button_frame.pack(pady=(5, 0))
-
-        ttk.Button(
-            button_frame,
-            text="Copy Default (with Glossary)",
-            command=self._copy_default_with_glossary,
-        ).pack(side="left", padx=(0, 5))
-
-        ttk.Button(
-            button_frame,
-            text="Copy Default (no Glossary)",
-            command=self._copy_default_without_glossary,
-        ).pack(side="left", padx=(0, 5))
-
-        ttk.Button(
-            button_frame,
-            text="Clear",
-            command=self._clear_prompt,
-        ).pack(side="left")
-
-    def _create_default_prompts_section(self):
-        """Create collapsible section showing default prompts."""
-        # Toggle button for showing/hiding defaults
-        self._defaults_visible = tk.BooleanVar(value=False)
-
-        # Create a frame for the toggle button
-        toggle_frame = ttk.Frame(self.frame)
-        toggle_frame.pack(fill="x")
-
-        # Use a button with arrow indicator for better UX
-        self._toggle_btn = ttk.Button(
-            toggle_frame,
-            text="\u25b6 Show default prompts (reference)",
-            command=self._toggle_defaults_visibility,
-            width=35,
-        )
-        self._toggle_btn.pack(side="left")
-
-        # Frame for default prompts - initially not packed
-        self._defaults_frame = ttk.Frame(self.frame)
-
-    def _toggle_defaults_visibility(self):
-        """Toggle visibility of default prompts section."""
-        is_visible = self._defaults_visible.get()
-        self._defaults_visible.set(not is_visible)
-
-        if self._defaults_visible.get():
-            # Show defaults - update button text and show frame
-            self._toggle_btn.configure(text="\u25bc Hide default prompts (reference)")
-            self._defaults_frame.pack(
-                fill="x", pady=(5, 0), after=self._toggle_btn.master
+        ghost = dict(fg_color=C_SURFACE, text_color=C_TEXT2, hover_color=C_SURFACE2,
+                     border_width=1, border_color=C_BORDER)
+        for text, cmd in [
+            ("Show defaults",     self._toggle_defaults),
+            ("Copy w/ Glossary",  self._copy_with_glossary),
+            ("Copy no Glossary",  self._copy_without_glossary),
+            ("Clear",             self._clear_prompt),
+        ]:
+            btn = ctk.CTkButton(
+                btn_row, text=text, command=cmd,
+                height=27, corner_radius=6, font=FONT_SM, **ghost,
             )
-            self._populate_defaults_frame()
+            btn.pack(side="left", padx=(0, 6))
+            if text == "Show defaults":
+                self._show_defaults_btn = btn
+
+    def _toggle_defaults(self):
+        self._defaults_visible = not self._defaults_visible
+        if self._defaults_visible:
+            if self._show_defaults_btn:
+                self._show_defaults_btn.configure(text="Hide defaults")
+            self._defaults_frame.pack(fill="x", pady=(0, 8),
+                                      before=self.prompt_text)
+            self._populate_defaults()
         else:
-            # Hide defaults - update button text and hide frame
-            self._toggle_btn.configure(text="\u25b6 Show default prompts (reference)")
+            if self._show_defaults_btn:
+                self._show_defaults_btn.configure(text="Show defaults")
             self._defaults_frame.pack_forget()
 
-    def _populate_defaults_frame(self):
-        """Populate the defaults frame with read-only prompt displays."""
-        # Clear existing content
-        for widget in self._defaults_frame.winfo_children():
-            widget.destroy()
+    def _populate_defaults(self):
+        for w in self._defaults_frame.winfo_children():
+            w.destroy()
+        for heading, text in [
+            ("Default (with glossary):", text_refiner_prompt_w_glossary),
+            ("Default (without glossary):", text_refiner_prompt_wo_glossary),
+        ]:
+            ctk.CTkLabel(
+                self._defaults_frame, text=heading,
+                font=FONT_BOLD, text_color=C_TEXT2, fg_color="transparent", anchor="w",
+            ).pack(anchor="w", pady=(8 if heading.startswith("Default (without") else 0, 3))
+            box = ctk.CTkTextbox(
+                self._defaults_frame, height=80, font=FONT_MONO,
+                fg_color=C_SURFACE, border_color=C_BORDER, text_color=C_TEXT2,
+                corner_radius=7, border_width=1, state="normal",
+            )
+            box.pack(fill="x", pady=(0, 4))
+            box.insert("1.0", text)
+            box.configure(state="disabled")
 
-        # With glossary prompt
-        ttk.Label(
-            self._defaults_frame,
-            text="Default (with glossary):",
-            font=("TkDefaultFont", 9, "bold"),
-        ).pack(anchor="w")
-
-        with_glossary_text = tk.Text(
-            self._defaults_frame,
-            height=6,
-            width=60,
-            wrap=tk.WORD,
-            font=("TkFixedFont", 8),
-            state="disabled",
-            background="#f0f0f0",
-        )
-        with_glossary_text.pack(fill="x", pady=(2, 10))
-        with_glossary_text.configure(state="normal")
-        with_glossary_text.insert("1.0", text_refiner_prompt_w_glossary)
-        with_glossary_text.configure(state="disabled")
-
-        # Without glossary prompt
-        ttk.Label(
-            self._defaults_frame,
-            text="Default (without glossary):",
-            font=("TkDefaultFont", 9, "bold"),
-        ).pack(anchor="w")
-
-        wo_glossary_text = tk.Text(
-            self._defaults_frame,
-            height=6,
-            width=60,
-            wrap=tk.WORD,
-            font=("TkFixedFont", 8),
-            state="disabled",
-            background="#f0f0f0",
-        )
-        wo_glossary_text.pack(fill="x", pady=(2, 0))
-        wo_glossary_text.configure(state="normal")
-        wo_glossary_text.insert("1.0", text_refiner_prompt_wo_glossary)
-        wo_glossary_text.configure(state="disabled")
-
-    def _on_text_modified(self, event=None):
-        """Handle text modification events."""
-        if self._suspend_change_events:
+    def _on_modified(self, _event=None):
+        if self._suspend:
             return
-
-        # Reset the modified flag
-        self.prompt_text.edit_modified(False)
-
-        # Update character count
-        content = self.prompt_text.get("1.0", "end-1c")
-        self.char_count_label.configure(text=f"{len(content)} characters")
-
-        # Notify change
+        content = self._get_text()
+        if self.char_count_label:
+            self.char_count_label.configure(text=f"{len(content)} characters")
         if self.on_change:
             self.on_change()
 
-    def _copy_default_with_glossary(self):
-        """Copy default prompt with glossary placeholder to editor."""
-        self._suspend_change_events = True
-        self.prompt_text.delete("1.0", tk.END)
-        self.prompt_text.insert("1.0", text_refiner_prompt_w_glossary)
-        self._suspend_change_events = False
-        self._on_text_modified()
-
-    def _copy_default_without_glossary(self):
-        """Copy default prompt without glossary to editor."""
-        self._suspend_change_events = True
-        self.prompt_text.delete("1.0", tk.END)
-        self.prompt_text.insert("1.0", text_refiner_prompt_wo_glossary)
-        self._suspend_change_events = False
-        self._on_text_modified()
-
-    def _clear_prompt(self):
-        """Clear the custom prompt."""
-        if self.prompt_text.get("1.0", "end-1c").strip():
-            if messagebox.askyesno(
-                "Clear Custom Prompt",
-                "Are you sure you want to clear the custom prompt?\nThe default prompt will be used.",
-            ):
-                self._suspend_change_events = True
-                self.prompt_text.delete("1.0", tk.END)
-                self._suspend_change_events = False
-                self._on_text_modified()
-        else:
-            # Already empty, just clear without confirmation
-            self._suspend_change_events = True
-            self.prompt_text.delete("1.0", tk.END)
-            self._suspend_change_events = False
-            self._on_text_modified()
-
-    def get_prompt(self) -> str:
-        """
-        Get the current custom prompt.
-
-        Returns:
-            Custom prompt string (empty if using default)
-        """
+    def _get_text(self) -> str:
+        if not self.prompt_text:
+            return ""
         return self.prompt_text.get("1.0", "end-1c").strip()
 
-    def set_prompt(self, prompt: str):
-        """
-        Set the custom prompt.
+    def _set_text(self, text: str):
+        if not self.prompt_text:
+            return
+        self.prompt_text.configure(state="normal")
+        self.prompt_text.delete("1.0", "end")
+        if text:
+            self.prompt_text.insert("1.0", text)
 
-        Args:
-            prompt: Custom prompt string
-        """
-        self._suspend_change_events = True
-        self.prompt_text.delete("1.0", tk.END)
-        if prompt:
-            self.prompt_text.insert("1.0", prompt)
-        self._suspend_change_events = False
-        # Update character count without triggering change callback
-        content = self.prompt_text.get("1.0", "end-1c")
-        self.char_count_label.configure(text=f"{len(content)} characters")
+    def _copy_with_glossary(self):
+        self._suspend = True
+        self._set_text(text_refiner_prompt_w_glossary)
+        self._suspend = False
+        self._on_modified()
+
+    def _copy_without_glossary(self):
+        self._suspend = True
+        self._set_text(text_refiner_prompt_wo_glossary)
+        self._suspend = False
+        self._on_modified()
+
+    def _clear_prompt(self):
+        if self._get_text():
+            if not messagebox.askyesno(
+                "Clear Custom Prompt",
+                "Clear the custom prompt? The default prompt will be used.",
+            ):
+                return
+        self._suspend = True
+        self._set_text("")
+        self._suspend = False
+        self._on_modified()
+
+    def set_enabled(self, enabled: bool):
+        """Gray out the prompt editor and its action buttons when disabled."""
+        state = "normal" if enabled else "disabled"
+        if self.prompt_text:
+            self.prompt_text.configure(state=state)
+        for btn in getattr(self, "_btn_row", None).winfo_children() if getattr(self, "_btn_row", None) else []:
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
+
+    # ── Public interface ───────────────────────────────────────────────────────
+
+    def get_prompt(self) -> str:
+        return self._get_text()
+
+    def set_prompt(self, prompt: str):
+        self._suspend = True
+        self._set_text(prompt)
+        self._suspend = False
+        if self.char_count_label:
+            self.char_count_label.configure(text=f"{len(prompt)} characters")

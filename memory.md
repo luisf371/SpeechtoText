@@ -25,3 +25,40 @@ Append-only lessons learned log. Newest notes go at the bottom. Keep entries bri
 - If Parakeet responses stop after light usage, check for a stale streaming session: server/client close can end the receive thread without a request-time exception, so session reuse must require an active thread, not just `error is None`.
 - Parakeet streaming latency knobs are client-configurable and sent as WebSocket query params: `vad_end_silence_ms` default 250, `vad_max_chunk_seconds` default 8.0, `transcription_batch_size` default 4, and `transcription_batch_window_ms` default 15; server must read these params for behavior to change.
 - Parakeet REST recordings auto-stop gracefully after `parakeet_rest_auto_stop_seconds` (default 120.0) via the worker queue, then process the saved WAV normally; duplicate manual stop/release after timer stop is ignored.
+
+## 2026-06-05 (settings redesign)
+
+- `APISection` constructor changed from `(parent, on_change)` to `(stt_parent, refinement_parent, keys_parent, on_change)` — three separate frames let STT, Refinement, and API-keys content live in different tabs.
+- `FeatureFlagsSection` constructor changed from `(parent)` to `(refinement_parent, advanced_parent)` — enable_text_refinement row goes in Refinement tab; logging/audio/debug go in Advanced tab.
+- `configuration_window.py` fully rewritten as 720×520 dark tabbed window (clam base theme, design tokens from `design_handoff_settings_redesign/README.md`). Tab panels are plain `tk.Frame`s; only the active one is `pack()`ed. `_init_sections()` is guarded so it only runs once.
+- `tests/conftest.py` updated: `APISection` mock now passes 3 `MagicMock()` parents; `FeatureFlagsSection` mock passes 2; unused `status_section` assignment removed.
+- `StatusSection` is no longer instantiated in the new window — footer status pill is drawn inline in `configuration_window.py`.
+- All GUI files ported to `customtkinter` (v5.2.2, dependency added to pyproject.toml). `ctk.CTk` root, `ctk.CTkScrollableFrame` per tab, `ctk.CTkSwitch` for toggles, `ctk.CTkComboBox` for selects, `ctk.CTkTextbox` for prompt editor, `ctk.CTkScrollbar` inside glossary listbox (which stays as `tk.Listbox` with dark colors — CTk has no native listbox widget).
+- CTkComboBox `command` callback receives the selected value string as first arg; use `lambda _v: handler()` to bridge to zero-arg callers.
+- CTkComboBox option-list update uses `.configure(values=...)` not `combo["values"] = ...`.
+- CTkEntry show-toggle uses `entry.cget("show")` and `entry.configure(show=...)`, NOT `entry["show"]`.
+- CTk test isolation: passing `MagicMock()` as parent to CTk widget constructors causes hangs (CTk calls `after()` on a mock, which recurses or blocks). Fix: pass a real withdrawn `tk.Tk()` root as parent.
+- Only one `tk.Tk()` per process: creating a second `tk.Tk()` after destroying the first causes sporadic skip/failure. The `mock_tk_root` fixture is `scope="session"` so a single root is shared across all GUI tests.
+- `_update_custom_endpoint_visibility()` uses `pack()`/`pack_forget()` (not `grid()`). Tests that mock visibility calls should mock `.pack`, not `.grid`.
+- `APISection._custom_stt_section` has a `custom_stt_endpoint_frame` property alias for backward compatibility with existing tests.
+- Empty-first-tab bug: `_build_sidebar` called `_switch_tab("stt")` before `_build_tabs` populated `_tab_frames`; fix is to call `_switch_tab` in `_build_layout` after `_build_tabs`.
+- `"  ".join(text)` spreads each CHARACTER with 2-space gaps (i.e. it iterates characters, not words) — do NOT use this as a letter-spacing substitute; it produces "P  R  O  V  I  D  E  R".
+- GUI fonts bumped to 11–12pt (was 9–10pt) across all section files for readability.
+
+## 2026-06-06 (settings redesign — Opus fidelity pass)
+
+- Added a reusable `_subhead(parent, text, pill=None)` helper (uppercase label + divider line + optional amber pill) in `api_section.py` and `prompt_section.py` to match the design's `.subhead`/`.cond` treatment. Used for STT "Parakeet" (with `● Provider: parakeet` pill), "Streaming tuning", and "Custom Prompt".
+- API-key "SET" badges: keyed the badge dict by `str(var)` because `tk.StringVar` is unhashable — do NOT use the var itself as a dict key. Badges toggle via a `trace_add("write")` per key var + `_refresh_all_key_badges()` called from `set_values`.
+- Implemented the README's "gray out refinement controls when master toggle is OFF" behavior: `ConfigurationWindow._update_effective_control_state()` now calls `APISection.set_refinement_enabled(bool)` and `PromptSection.set_enabled(bool)`. Combo re-enable state is `"readonly"` for provider, `"normal"` for model.
+- Hotkeys: value entry is now a fixed-width (170px) centered mono "keycap" with a transparent expanding spacer pushing the Record button to the right edge (was full-width expanding entry).
+- Glossary empty-state: `tk.Listbox` has no native placeholder; use a `CTkLabel` `.place(relx=.5, rely=.5, anchor=center)` over the listbox frame, toggled in `_update_empty_state()` via `listbox.size()`.
+- Removed redundant prompt-section top "Show default prompts" button; the button-row "Show defaults" entry now doubles as the toggle (its ref is captured as `_show_defaults_btn`).
+- Renamed Advanced toggle "Enable Audio Feedback" → "Audio Feedback" to match design.
+- Design's "WINDOWS" section (Close to taskbar / Start with Windows) was intentionally NOT added — those fields don't exist in `PushToTalkConfig` and would be non-functional dead toggles.
+- `api_section.py` shows 24 pre-existing ruff E701 (aligned one-line `elif provider == ...: self.x = ...` blocks) from the earlier uncommitted CTk rewrite — not from this pass; `ruff-format` (pre-commit) auto-splits them on commit, so left as-is to avoid unrelated churn.
+
+## 2026-06-06 (settings redesign — review feedback fixes)
+
+- **CTkFrame default height is 200px.** A `CTkFrame` with `pack_propagate(False)` and no `height=` set requests 200px and will inflate its parent. This caused the "Enable Text Refinement" master card to render ~200px tall: the 3px amber accent `bar` (in `settings_section._make_switch_row`, `pack_propagate(False)`, `fill="y"`, no height) forced the whole row to 200px. Fix: give the bar `height=1`; `fill="y"` still stretches it to the card's real height. Same trap applies to any empty spacer frame — avoid `CTkFrame(...).pack(fill="x", expand=True)` as a spacer; instead pack the button `side="right"` and the field `side="left"` (no spacer).
+- Dropdowns switched from `CTkComboBox` → `CTkOptionMenu` (in `api_section._combo`). CTkComboBox renders as a split editable entry + separate arrow button ("abrupt arrow, not filled"); CTkOptionMenu is a single filled click-anywhere select that matches the design's `.control.select`. CTkOptionMenu has NO `border_width`/`border_color`, so wrap it in a 1px-bordered `CTkFrame` shell (`fg_color=C_INPUT`, `pack_propagate(False)`, `height=33`) to keep the inset border parity with text inputs. Set `button_color == fg_color` so the chevron segment blends into one box; `dynamic_resizing=False`, `anchor="w"`. State is `normal`/`disabled` only (no `readonly`) — updated `set_refinement_enabled` accordingly.
+- Verified visually by screenshotting the live window: launch `_shot_window.py <tab>` as a background job (positions window topmost at +200+140), then capture with .NET `System.Drawing` `CopyFromScreen` → PNG (Pillow is NOT installed, so `pyautogui.screenshot`/PIL paths are unavailable). Remember to delete the temp `.py`/`.png` afterward.

@@ -1,211 +1,195 @@
-"""Glossary management section for PushToTalk configuration GUI."""
+"""Glossary management section — CustomTkinter version."""
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 from typing import Callable
+import customtkinter as ctk
+
+C_WIN     = "#131519"
+C_INPUT   = "#0e1013"
+C_SURFACE = "#1b1e24"
+C_SURFACE2 = "#23272f"
+C_BORDER  = "#2a2f38"
+C_TEXT    = "#e7e9ec"
+C_TEXT2   = "#9ba2ab"
+C_TEXT3   = "#6a717b"
+C_ACCENT  = "#f5a524"
+C_ACCENT2 = "#ffb454"
+
+FONT_SM   = ("Segoe UI", 13)
+FONT_BOLD = ("Segoe UI", 14, "bold")
 
 
 class GlossaryTermDialog:
-    """Simple dialog for adding/editing glossary terms."""
+    """Modal dialog for adding/editing a glossary term."""
 
-    def __init__(self, parent, title, initial_value=""):
-        self.parent = parent
-        self.title = title
-        self.initial_value = initial_value
-        self.result = None
-        self.dialog = None
+    def __init__(self, parent, title: str, initial_value: str = ""):
+        self.result: str | None = None
+        self._dialog = ctk.CTkToplevel(parent)
+        self._dialog.title(title)
+        self._dialog.geometry("360x160")
+        self._dialog.resizable(False, False)
+        self._dialog.configure(fg_color="#131519")
+        self._dialog.transient(parent)
+        self._dialog.grab_set()
 
-    def show(self):
-        """Show the dialog and return the entered term."""
-        self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title(self.title)
-        self.dialog.geometry("350x150")
-        self.dialog.resizable(False, False)
+        pad = ctk.CTkFrame(self._dialog, fg_color="transparent", corner_radius=0)
+        pad.pack(fill="both", expand=True, padx=20, pady=18)
 
-        # Make it modal
-        self.dialog.transient(self.parent)
-        self.dialog.grab_set()
+        ctk.CTkLabel(
+            pad, text="Enter glossary term:", font=FONT_SM,
+            text_color="#9ba2ab", fg_color="transparent", anchor="w",
+        ).pack(anchor="w", pady=(0, 6))
 
-        # Center on parent
-        self.dialog.update_idletasks()
-        x = (
-            self.parent.winfo_x()
-            + (self.parent.winfo_width() // 2)
-            - (self.dialog.winfo_width() // 2)
+        self._var = tk.StringVar(value=initial_value)
+        self._entry = ctk.CTkEntry(
+            pad, textvariable=self._var, font=("Segoe UI", 13),
+            fg_color="#0e1013", border_color="#2a2f38", text_color="#e7e9ec",
+            height=33, corner_radius=7,
         )
-        y = (
-            self.parent.winfo_y()
-            + (self.parent.winfo_height() // 2)
-            - (self.dialog.winfo_height() // 2)
-        )
-        self.dialog.geometry(f"+{x}+{y}")
+        self._entry.pack(fill="x", pady=(0, 14))
+        self._entry.focus()
+        self._entry.select_range(0, tk.END)
 
-        # Create widgets
-        main_frame = ttk.Frame(self.dialog, padding=20)
-        main_frame.pack(fill="both", expand=True)
+        btns = ctk.CTkFrame(pad, fg_color="transparent", corner_radius=0)
+        btns.pack(fill="x")
+        ctk.CTkButton(
+            btns, text="OK", command=self._ok,
+            height=31, corner_radius=6, font=FONT_SM,
+            fg_color="#f5a524", text_color="#1a1205", hover_color="#ffb454",
+        ).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(
+            btns, text="Cancel", command=self._cancel,
+            height=31, corner_radius=6, font=FONT_SM,
+            fg_color="#1b1e24", text_color="#9ba2ab",
+            hover_color="#23272f", border_width=1, border_color="#2a2f38",
+        ).pack(side="right")
 
-        # Label and entry
-        ttk.Label(main_frame, text="Enter glossary term:").pack(anchor="w", pady=(0, 5))
+        self._dialog.bind("<Return>", lambda _e: self._ok())
+        self._dialog.bind("<Escape>", lambda _e: self._cancel())
 
-        self.entry_var = tk.StringVar(value=self.initial_value)
-        entry = ttk.Entry(main_frame, textvariable=self.entry_var, width=40)
-        entry.pack(fill="x", pady=(0, 15))
-        entry.focus()
-        entry.select_range(0, tk.END)
-
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x")
-
-        ttk.Button(button_frame, text="OK", command=self._ok_clicked).pack(
-            side="right", padx=(5, 0)
-        )
-        ttk.Button(button_frame, text="Cancel", command=self._cancel_clicked).pack(
-            side="right"
-        )
-
-        # Bind Enter and Escape
-        self.dialog.bind("<Return>", lambda e: self._ok_clicked())
-        self.dialog.bind("<Escape>", lambda e: self._cancel_clicked())
-
-        # Wait for dialog to close
-        self.dialog.wait_window()
-
+    def show(self) -> str | None:
+        self._dialog.wait_window()
         return self.result
 
-    def _ok_clicked(self):
-        """Handle OK button click."""
-        self.result = self.entry_var.get()
-        self.dialog.destroy()
+    def _ok(self):
+        self.result = self._var.get()
+        self._dialog.destroy()
 
-    def _cancel_clicked(self):
-        """Handle Cancel button click."""
-        self.result = None
-        self.dialog.destroy()
+    def _cancel(self):
+        self._dialog.destroy()
 
 
 class GlossarySection:
-    """Manages the custom glossary configuration section."""
+    """Glossary list with search, add, edit, delete."""
 
     def __init__(
         self,
-        parent: ttk.Widget,
-        root: tk.Tk,
+        parent,
+        root,
         initial_terms: list[str],
         on_change: Callable[[], None] | None = None,
     ):
-        """
-        Initialize the glossary section.
-
-        Args:
-            parent: Parent widget to attach this section to
-            root: Root window (needed for dialogs)
-            initial_terms: Initial glossary terms
-            on_change: Callback called when terms are modified
-        """
         self.root = root
         self.on_change = on_change
         self.glossary_terms = list(initial_terms)
 
-        # Create the frame
-        self.frame = ttk.LabelFrame(parent, text="Custom Glossary", padding=10)
-        self.frame.pack(fill="x", pady=(0, 10))
+        self.frame = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+        self.frame.pack(fill="both", expand=True)
 
-        # Widgets
-        self.glossary_search_var = None
-        self.glossary_listbox = None
+        self.glossary_search_var = tk.StringVar()
+        self.glossary_listbox: tk.Listbox | None = None
 
         self._create_widgets()
 
     def _create_widgets(self):
-        """Create the glossary section widgets."""
-        # Description
-        description = ttk.Label(
-            self.frame,
-            text="Add domain-specific terms, acronyms, and technical words to help the AI better recognize\nand transcribe your speech.",
-            font=("TkDefaultFont", 9),
-        )
-        description.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        f = self.frame
 
-        # Search bar
-        search_frame = ttk.Frame(self.frame)
-        search_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 5))
-
-        ttk.Label(search_frame, text="Search:").pack(side="left", padx=(0, 5))
-        self.glossary_search_var = tk.StringVar()
+        # Search
+        search_row = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        search_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkEntry(
+            search_row, textvariable=self.glossary_search_var,
+            placeholder_text="Filter terms…",
+            font=("Segoe UI", 13), fg_color=C_INPUT,
+            border_color=C_BORDER, text_color=C_TEXT, height=33, corner_radius=7,
+        ).pack(fill="x")
         self.glossary_search_var.trace("w", self._filter_glossary_list)
-        search_entry = ttk.Entry(
-            search_frame, textvariable=self.glossary_search_var, width=50
-        )
-        search_entry.pack(side="left", fill="x", expand=True)
 
-        # Glossary list with scrollbar
-        list_frame = ttk.Frame(self.frame)
-        list_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        list_frame.grid_columnconfigure(0, weight=1)
-
-        # Create scrollable listbox
-        listbox_frame = ttk.Frame(list_frame)
-        listbox_frame.pack(fill="both", expand=True)
+        # Listbox (tk.Listbox with dark colors — CTk has no native listbox)
+        lb_frame = ctk.CTkFrame(f, fg_color=C_INPUT, corner_radius=7, border_width=1,
+                                border_color=C_BORDER)
+        lb_frame.pack(fill="x", pady=(0, 8))
 
         self.glossary_listbox = tk.Listbox(
-            listbox_frame,
+            lb_frame,
             height=6,
-            width=60,
-            selectmode=tk.SINGLE,
-            font=("TkDefaultFont", 9),
+            bg=C_INPUT, fg=C_TEXT,
+            selectbackground="#1d1a0d", selectforeground=C_ACCENT2,
+            borderwidth=0, highlightthickness=0,
+            activestyle="none",
+            font=("Segoe UI", 13),
+        )
+        sb = ctk.CTkScrollbar(lb_frame, command=self.glossary_listbox.yview,
+                              fg_color=C_INPUT, button_color=C_SURFACE2,
+                              button_hover_color=C_TEXT3)
+        self.glossary_listbox.configure(yscrollcommand=sb.set)
+        self.glossary_listbox.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+        sb.pack(side="right", fill="y", pady=4)
+
+        # Centered empty-state placeholder (shown when no terms are present)
+        self._empty_label = ctk.CTkLabel(
+            lb_frame,
+            text="No terms yet\nAdd acronyms or jargon the model keeps missing",
+            font=FONT_SM, text_color=C_TEXT3, fg_color=C_INPUT, justify="center",
         )
 
-        scrollbar_glossary = ttk.Scrollbar(listbox_frame, orient="vertical")
-        scrollbar_glossary.config(command=self.glossary_listbox.yview)
-        self.glossary_listbox.config(yscrollcommand=scrollbar_glossary.set)
+        # Buttons
+        btn_row = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        btn_row.pack(anchor="w")
+        for text, cmd in [
+            ("Add term", self._add_term),
+            ("Edit",     self._edit_term),
+            ("Delete",   self._delete_term),
+        ]:
+            style = dict(fg_color=C_ACCENT, text_color="#1a1205", hover_color=C_ACCENT2) \
+                if text == "Add term" else \
+                dict(fg_color=C_SURFACE, text_color=C_TEXT2, hover_color=C_SURFACE2,
+                     border_width=1, border_color=C_BORDER)
+            ctk.CTkButton(
+                btn_row, text=text, command=cmd,
+                height=31, corner_radius=6, font=FONT_SM, **style,
+            ).pack(side="left", padx=(0, 6))
 
-        self.glossary_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar_glossary.pack(side="right", fill="y")
-
-        # Buttons frame
-        buttons_frame = ttk.Frame(self.frame)
-        buttons_frame.grid(row=3, column=0, columnspan=3, pady=(5, 0))
-
-        ttk.Button(buttons_frame, text="Add", command=self._add_term).pack(
-            side="left", padx=(0, 5)
-        )
-        ttk.Button(buttons_frame, text="Edit", command=self._edit_term).pack(
-            side="left", padx=(0, 5)
-        )
-        ttk.Button(buttons_frame, text="Delete", command=self._delete_term).pack(
-            side="left"
-        )
-
-        # Configure grid weights for proper resizing
-        self.frame.grid_columnconfigure(0, weight=1)
-
-        # Initialize the glossary list
         self._refresh_list()
 
-    def _filter_glossary_list(self, *args):
-        """Filter the glossary list based on search term."""
-        search_term = self.glossary_search_var.get().lower()
+    def _filter_glossary_list(self, *_args):
+        search = self.glossary_search_var.get().lower()
         self.glossary_listbox.delete(0, tk.END)
-
         for term in self.glossary_terms:
-            if search_term in term.lower():
+            if search in term.lower():
                 self.glossary_listbox.insert(tk.END, term)
+        self._update_empty_state()
 
     def _refresh_list(self):
-        """Refresh the glossary list display."""
         if not self.glossary_listbox:
             return
-
         self.glossary_listbox.delete(0, tk.END)
         for term in sorted(self.glossary_terms, key=str.lower):
             self.glossary_listbox.insert(tk.END, term)
+        self._update_empty_state()
+
+    def _update_empty_state(self):
+        empty_label = getattr(self, "_empty_label", None)
+        if not empty_label or not self.glossary_listbox:
+            return
+        if self.glossary_listbox.size() == 0:
+            empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            empty_label.place_forget()
 
     def _add_term(self):
-        """Add a new glossary term."""
-        dialog = GlossaryTermDialog(self.root, "Add Glossary Term")
-        term = dialog.show()
-
+        term = GlossaryTermDialog(self.root, "Add Glossary Term").show()
         if term and term.strip():
             term = term.strip()
             if term not in self.glossary_terms:
@@ -214,72 +198,40 @@ class GlossarySection:
                 if self.on_change:
                     self.on_change()
             else:
-                messagebox.showinfo(
-                    "Duplicate Term", f"The term '{term}' is already in the glossary."
-                )
+                messagebox.showinfo("Duplicate Term", f"'{term}' is already in the glossary.")
 
     def _edit_term(self):
-        """Edit the selected glossary term."""
-        selection = self.glossary_listbox.curselection()
-        if not selection:
+        sel = self.glossary_listbox.curselection()
+        if not sel:
             messagebox.showinfo("No Selection", "Please select a term to edit.")
             return
-
-        index = selection[0]
-        current_term = self.glossary_listbox.get(index)
-
-        dialog = GlossaryTermDialog(self.root, "Edit Glossary Term", current_term)
-        new_term = dialog.show()
-
-        if new_term and new_term.strip():
+        current = self.glossary_listbox.get(sel[0])
+        new_term = GlossaryTermDialog(self.root, "Edit Glossary Term", current).show()
+        if new_term and new_term.strip() and new_term.strip() != current:
             new_term = new_term.strip()
-            if new_term != current_term:
-                if new_term not in self.glossary_terms:
-                    # Find the actual index in the sorted list
-                    actual_index = self.glossary_terms.index(current_term)
-                    self.glossary_terms[actual_index] = new_term
-                    self._refresh_list()
-                    if self.on_change:
-                        self.on_change()
-                else:
-                    messagebox.showinfo(
-                        "Duplicate Term",
-                        f"The term '{new_term}' is already in the glossary.",
-                    )
+            if new_term not in self.glossary_terms:
+                self.glossary_terms[self.glossary_terms.index(current)] = new_term
+                self._refresh_list()
+                if self.on_change:
+                    self.on_change()
+            else:
+                messagebox.showinfo("Duplicate Term", f"'{new_term}' is already in the glossary.")
 
     def _delete_term(self):
-        """Delete the selected glossary term."""
-        selection = self.glossary_listbox.curselection()
-        if not selection:
+        sel = self.glossary_listbox.curselection()
+        if not sel:
             messagebox.showinfo("No Selection", "Please select a term to delete.")
             return
-
-        index = selection[0]
-        term = self.glossary_listbox.get(index)
-
-        if messagebox.askyesno(
-            "Confirm Delete", f"Are you sure you want to delete '{term}'?"
-        ):
+        term = self.glossary_listbox.get(sel[0])
+        if messagebox.askyesno("Confirm Delete", f"Delete '{term}'?"):
             self.glossary_terms.remove(term)
             self._refresh_list()
             if self.on_change:
                 self.on_change()
 
     def get_terms(self) -> list[str]:
-        """
-        Get the current glossary terms.
-
-        Returns:
-            List of glossary terms
-        """
         return list(self.glossary_terms)
 
     def set_terms(self, terms: list[str]):
-        """
-        Set the glossary terms.
-
-        Args:
-            terms: New list of glossary terms
-        """
         self.glossary_terms = list(terms)
         self._refresh_list()

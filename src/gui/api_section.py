@@ -1,8 +1,9 @@
-"""API configuration section for PushToTalk configuration GUI."""
+"""API configuration section — CustomTkinter version."""
 
 import tkinter as tk
-from tkinter import ttk
 from typing import Callable
+import customtkinter as ctk
+
 from src.gui.validators import (
     validate_openai_api_key,
     validate_deepgram_api_key,
@@ -10,29 +11,113 @@ from src.gui.validators import (
     validate_gemini_api_key,
 )
 
+C_WIN      = "#131519"
+C_INPUT    = "#0e1013"
+C_BORDER   = "#2a2f38"
+C_BORDER_S = "#21252c"
+C_TEXT     = "#e7e9ec"
+C_TEXT2    = "#9ba2ab"
+C_TEXT3    = "#6a717b"
+C_SURFACE  = "#1b1e24"
+C_SURFACE2 = "#23272f"
+C_ACCENT   = "#f5a524"
+C_ACCENT2  = "#ffb454"
+C_ACCENT_DIM = "#1d1a0d"
+
+FONT_SM   = ("Segoe UI", 13)
+FONT_MONO = ("Consolas", 14)
+FONT_HEAD = ("Segoe UI", 11, "bold")
+
+
+def _subhead(parent, text: str, pill: str | None = None):
+    """Uppercase section label + divider line, with an optional amber pill."""
+    row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+    row.pack(fill="x", pady=(16, 10))
+    ctk.CTkLabel(
+        row, text=text.upper(), font=FONT_HEAD, text_color=C_TEXT3,
+        fg_color="transparent",
+    ).pack(side="left")
+    if pill:
+        ctk.CTkLabel(
+            row, text=f"  {pill}  ", font=("Segoe UI", 11),
+            text_color=C_ACCENT2, fg_color=C_ACCENT_DIM, corner_radius=999,
+        ).pack(side="right")
+    ctk.CTkFrame(row, fg_color=C_BORDER_S, height=1, corner_radius=0).pack(
+        side="left", fill="x", expand=True, padx=10
+    )
+    return row
+
+
+def _field(parent, label: str, variable: tk.StringVar, mono=False, show="", placeholder="") -> ctk.CTkEntry:
+    row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+    row.pack(fill="x", pady=(0, 10))
+    ctk.CTkLabel(row, text=label, font=FONT_SM, text_color=C_TEXT2,
+                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(0, 4))
+    font = ("Consolas", 10) if mono else FONT_SM
+    entry = ctk.CTkEntry(
+        row, textvariable=variable, font=font,
+        fg_color=C_INPUT, border_color=C_BORDER, text_color=C_TEXT,
+        placeholder_text=placeholder, show=show, height=33, corner_radius=7,
+    )
+    entry.pack(fill="x")
+    return entry
+
+
+def _hint(parent, text: str):
+    ctk.CTkLabel(parent, text=text, font=("Segoe UI", 12), text_color=C_TEXT3,
+                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(2, 0))
+
+
+def _combo(parent, label: str, variable: tk.StringVar, values: list[str],
+           command=None, state="readonly") -> ctk.CTkOptionMenu:
+    row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+    row.pack(fill="x", pady=(0, 10))
+    ctk.CTkLabel(row, text=label, font=FONT_SM, text_color=C_TEXT2,
+                 fg_color="transparent", anchor="w").pack(anchor="w", pady=(0, 4))
+
+    # Bordered shell gives the OptionMenu the same 1px inset border as the
+    # text inputs; the menu fills it so the whole control reads as one box.
+    shell = ctk.CTkFrame(row, fg_color=C_INPUT, border_color=C_BORDER,
+                         border_width=1, corner_radius=7, height=33)
+    shell.pack(fill="x")
+    shell.pack_propagate(False)
+
+    combo = ctk.CTkOptionMenu(
+        shell, variable=variable, values=values, command=command,
+        font=FONT_SM, corner_radius=6, anchor="w", dynamic_resizing=False,
+        fg_color=C_INPUT, button_color=C_INPUT, button_hover_color=C_SURFACE,
+        text_color=C_TEXT,
+        dropdown_fg_color=C_SURFACE, dropdown_text_color=C_TEXT,
+        dropdown_hover_color=C_SURFACE2, dropdown_font=FONT_SM,
+    )
+    if state == "disabled":
+        combo.configure(state="disabled")
+    combo.pack(fill="both", expand=True, padx=1, pady=1)
+    return combo
+
 
 class APISection:
-    """Manages the speech-to-text API configuration section."""
+    """API configuration — split across STT, Refinement, and API-Keys tabs."""
 
-    def __init__(self, parent: ttk.Widget, on_change: Callable[[], None] | None = None):
-        """
-        Initialize the API section.
-
-        Args:
-            parent: Parent widget to attach this section to
-            on_change: Optional callback when configuration changes
-        """
+    def __init__(
+        self,
+        stt_parent,
+        refinement_parent,
+        keys_parent,
+        on_change: Callable[[], None] | None = None,
+    ):
         self.on_change = on_change
 
-        # API Keys section (separate from STT settings)
-        self.api_keys_frame = ttk.LabelFrame(parent, text="API Keys", padding=10)
-        self.api_keys_frame.pack(fill="x", pady=(0, 10))
+        self.stt_frame = ctk.CTkFrame(stt_parent, fg_color="transparent", corner_radius=0)
+        self.stt_frame.pack(fill="x")
 
-        # Speech-to-Text Settings section
-        self.frame = ttk.LabelFrame(parent, text="Speech-to-Text Settings", padding=10)
-        self.frame.pack(fill="x", pady=(0, 10))
+        self.refinement_frame = ctk.CTkFrame(refinement_parent, fg_color="transparent", corner_radius=0)
+        self.refinement_frame.pack(fill="x")
 
-        # Configuration variables
+        self.api_keys_frame = ctk.CTkFrame(keys_parent, fg_color="transparent", corner_radius=0)
+        self.api_keys_frame.pack(fill="x")
+
+        # Variables
         self.stt_provider_var = tk.StringVar()
         self.openai_api_key_var = tk.StringVar()
         self.deepgram_api_key_var = tk.StringVar()
@@ -52,622 +137,353 @@ class APISection:
         self.parakeet_streaming_batch_size_var = tk.StringVar()
         self.parakeet_streaming_batch_window_ms_var = tk.StringVar()
 
-        # Provider-specific widgets
-        self.openai_widgets = {}
-        self.deepgram_widgets = {}
-        self.cerebras_widgets = {}
-        self.gemini_widgets = {}
-        self.custom_widgets = {}
-        self.stt_model_combo = None
-        self.refinement_model_combo = None
+        self.stt_model_combo: ctk.CTkComboBox | None = None
+        self.refinement_model_combo: ctk.CTkComboBox | None = None
+        self._parakeet_section: ctk.CTkFrame | None = None
+        self._custom_stt_section: ctk.CTkFrame | None = None
+        self._custom_ref_section: ctk.CTkFrame | None = None
 
-        # Provider-specific model selections (to preserve when switching)
+        # Per-provider remembered models
         self.openai_stt_model = "gpt-4o-mini-transcribe"
         self.deepgram_stt_model = "nova-3"
         self.parakeet_stt_model = "parakeet-tdt-0.6b-v2"
         self.custom_stt_model = "whisper-1"
 
-        # Provider-specific refinement model selections
         self.openai_refinement_model = "gpt-4.1-nano"
         self.cerebras_refinement_model = "llama-3.3-70b"
         self.gemini_refinement_model = "gemini-3-flash-preview"
         self.custom_refinement_model = "llama3"
 
-        self._create_widgets()
+        self._create_stt_widgets()
+        self._create_refinement_widgets()
+        self._create_keys_widgets()
 
-    def _create_widgets(self):
-        """Create the API section widgets."""
-        # === API Keys Section ===
-        # OpenAI API Key Frame
-        self.openai_widgets["frame"] = ttk.Frame(self.api_keys_frame)
-        self.openai_widgets["frame"].grid(
-            row=0, column=0, columnspan=4, sticky="ew", pady=5
-        )
+    # ── Widget builders ────────────────────────────────────────────────────────
 
-        ttk.Label(self.openai_widgets["frame"], text="OpenAI API Key:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        openai_api_key_entry = ttk.Entry(
-            self.openai_widgets["frame"],
-            textvariable=self.openai_api_key_var,
-            show="*",
-            width=50,
-        )
-        openai_api_key_entry.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=2
-        )
+    def _create_stt_widgets(self):
+        f = self.stt_frame
 
-        # OpenAI Show/Hide API Key button
-        def toggle_openai_key_visibility():
-            if openai_api_key_entry["show"] == "*":
-                openai_api_key_entry["show"] = ""
-                openai_show_hide_btn["text"] = "Hide"
-            else:
-                openai_api_key_entry["show"] = "*"
-                openai_show_hide_btn["text"] = "Show"
-
-        openai_show_hide_btn = ttk.Button(
-            self.openai_widgets["frame"],
-            text="Show",
-            command=toggle_openai_key_visibility,
-            width=8,
-        )
-        openai_show_hide_btn.grid(row=0, column=3, padx=(5, 0), pady=2)
-        self.openai_widgets["frame"].columnconfigure(1, weight=1)
-
-        # Deepgram API Key Frame
-        self.deepgram_widgets["frame"] = ttk.Frame(self.api_keys_frame)
-        self.deepgram_widgets["frame"].grid(
-            row=1, column=0, columnspan=4, sticky="ew", pady=5
-        )
-
-        ttk.Label(self.deepgram_widgets["frame"], text="Deepgram API Key:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        deepgram_api_key_entry = ttk.Entry(
-            self.deepgram_widgets["frame"],
-            textvariable=self.deepgram_api_key_var,
-            show="*",
-            width=50,
-        )
-        deepgram_api_key_entry.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=2
-        )
-
-        # Deepgram Show/Hide API Key button
-        def toggle_deepgram_key_visibility():
-            if deepgram_api_key_entry["show"] == "*":
-                deepgram_api_key_entry["show"] = ""
-                deepgram_show_hide_btn["text"] = "Hide"
-            else:
-                deepgram_api_key_entry["show"] = "*"
-                deepgram_show_hide_btn["text"] = "Show"
-
-        deepgram_show_hide_btn = ttk.Button(
-            self.deepgram_widgets["frame"],
-            text="Show",
-            command=toggle_deepgram_key_visibility,
-            width=8,
-        )
-        deepgram_show_hide_btn.grid(row=0, column=3, padx=(5, 0), pady=2)
-        self.deepgram_widgets["frame"].columnconfigure(1, weight=1)
-
-        # Cerebras API Key Frame
-        self.cerebras_widgets["frame"] = ttk.Frame(self.api_keys_frame)
-        self.cerebras_widgets["frame"].grid(
-            row=2, column=0, columnspan=4, sticky="ew", pady=5
-        )
-
-        ttk.Label(self.cerebras_widgets["frame"], text="Cerebras API Key:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        cerebras_api_key_entry = ttk.Entry(
-            self.cerebras_widgets["frame"],
-            textvariable=self.cerebras_api_key_var,
-            show="*",
-            width=50,
-        )
-        cerebras_api_key_entry.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=2
-        )
-
-        # Cerebras Show/Hide API Key button
-        def toggle_cerebras_key_visibility():
-            if cerebras_api_key_entry["show"] == "*":
-                cerebras_api_key_entry["show"] = ""
-                cerebras_show_hide_btn["text"] = "Hide"
-            else:
-                cerebras_api_key_entry["show"] = "*"
-                cerebras_show_hide_btn["text"] = "Show"
-
-        cerebras_show_hide_btn = ttk.Button(
-            self.cerebras_widgets["frame"],
-            text="Show",
-            command=toggle_cerebras_key_visibility,
-            width=8,
-        )
-        cerebras_show_hide_btn.grid(row=0, column=3, padx=(5, 0), pady=2)
-        self.cerebras_widgets["frame"].columnconfigure(1, weight=1)
-
-        # Google Gemini API Key Frame
-        self.gemini_widgets["frame"] = ttk.Frame(self.api_keys_frame)
-        self.gemini_widgets["frame"].grid(
-            row=3, column=0, columnspan=4, sticky="ew", pady=5
-        )
-
-        ttk.Label(self.gemini_widgets["frame"], text="Gemini API Key:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        gemini_api_key_entry = ttk.Entry(
-            self.gemini_widgets["frame"],
-            textvariable=self.gemini_api_key_var,
-            show="*",
-            width=50,
-        )
-        gemini_api_key_entry.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=2
-        )
-
-        # Gemini Show/Hide API Key button
-        def toggle_gemini_key_visibility():
-            if gemini_api_key_entry["show"] == "*":
-                gemini_api_key_entry["show"] = ""
-                gemini_show_hide_btn["text"] = "Hide"
-            else:
-                gemini_api_key_entry["show"] = "*"
-                gemini_show_hide_btn["text"] = "Show"
-
-        gemini_show_hide_btn = ttk.Button(
-            self.gemini_widgets["frame"],
-            text="Show",
-            command=toggle_gemini_key_visibility,
-            width=8,
-        )
-        gemini_show_hide_btn.grid(row=0, column=3, padx=(5, 0), pady=2)
-        self.gemini_widgets["frame"].columnconfigure(1, weight=1)
-
-        # Custom API Key Frame
-        self.custom_widgets["frame"] = ttk.Frame(self.api_keys_frame)
-        self.custom_widgets["frame"].grid(
-            row=4, column=0, columnspan=4, sticky="ew", pady=5
-        )
-
-        ttk.Label(self.custom_widgets["frame"], text="Custom API Key:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        custom_api_key_entry = ttk.Entry(
-            self.custom_widgets["frame"],
-            textvariable=self.custom_api_key_var,
-            show="*",
-            width=50,
-        )
-        custom_api_key_entry.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=2
-        )
-
-        # Custom Show/Hide API Key button
-        def toggle_custom_key_visibility():
-            if custom_api_key_entry["show"] == "*":
-                custom_api_key_entry["show"] = ""
-                custom_show_hide_btn["text"] = "Hide"
-            else:
-                custom_api_key_entry["show"] = "*"
-                custom_show_hide_btn["text"] = "Show"
-
-        custom_show_hide_btn = ttk.Button(
-            self.custom_widgets["frame"],
-            text="Show",
-            command=toggle_custom_key_visibility,
-            width=8,
-        )
-        custom_show_hide_btn.grid(row=0, column=3, padx=(5, 0), pady=2)
-        self.custom_widgets["frame"].columnconfigure(1, weight=1)
-
-        # === Speech-to-Text Settings Section ===
-        # STT Provider Selection
-        ttk.Label(self.frame, text="STT Provider:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        stt_provider_combo = ttk.Combobox(
-            self.frame,
-            textvariable=self.stt_provider_var,
+        self.stt_provider_combo = _combo(
+            f, "STT Provider", self.stt_provider_var,
             values=["openai", "deepgram", "parakeet", "custom"],
-            state="readonly",
-            width=20,
+            command=lambda _v: self._on_provider_changed(),
         )
-        stt_provider_combo.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=2)
-        stt_provider_combo.bind("<<ComboboxSelected>>", self._on_provider_changed)
-
-        # STT Model (shared between providers, but values change)
-        ttk.Label(self.frame, text="STT Model:").grid(
-            row=1, column=0, sticky="w", pady=2
-        )
-        self.stt_model_combo = ttk.Combobox(
-            self.frame,
-            textvariable=self.stt_model_var,
+        self.stt_model_combo = _combo(
+            f, "STT Model", self.stt_model_var,
             values=["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+            command=lambda _v: self._on_stt_model_changed(),
             state="normal",
-            width=20,
-        )
-        self.stt_model_combo.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=2)
-        self.stt_model_combo.bind("<<ComboboxSelected>>", self._on_stt_model_changed)
-
-        # Refinement Provider Selection
-        ttk.Label(self.frame, text="Refinement Provider:").grid(
-            row=2, column=0, sticky="w", pady=2
-        )
-        refinement_provider_combo = ttk.Combobox(
-            self.frame,
-            textvariable=self.refinement_provider_var,
-            values=["openai", "cerebras", "gemini", "custom"],
-            state="readonly",
-            width=20,
-        )
-        refinement_provider_combo.grid(
-            row=2, column=1, sticky="w", padx=(10, 0), pady=2
-        )
-        refinement_provider_combo.bind(
-            "<<ComboboxSelected>>", self._on_refinement_provider_changed
         )
 
-        # Refinement Model
-        ttk.Label(self.frame, text="Refinement Model:").grid(
-            row=3, column=0, sticky="w", pady=2
-        )
-        self.refinement_model_combo = ttk.Combobox(
-            self.frame,
-            textvariable=self.refinement_model_var,
-            values=[
-                "gpt-5",
-                "gpt-5-mini",
-                "gpt-5-nano",
-                "gpt-4.1",
-                "gpt-4.1-mini",
-                "gpt-4.1-nano",
-                "gpt-4o-mini",
-                "gpt-4o",
-            ],
-            state="normal",  # Allow custom model names
-            width=30,
-        )
-        self.refinement_model_combo.grid(
-            row=3, column=1, sticky="w", padx=(10, 0), pady=2
-        )
-        self.refinement_model_combo.bind(
-            "<<ComboboxSelected>>", self._on_refinement_model_changed
-        )
+        # ── Parakeet section ──────────────────────────────────────────────
+        self._parakeet_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._parakeet_section.pack(fill="x")
 
-        # Parakeet API Endpoint
-        self.parakeet_endpoint_frame = ttk.Frame(self.frame)
-        self.parakeet_endpoint_frame.grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=2
-        )
-        self.parakeet_endpoint_frame.columnconfigure(1, weight=1)
+        _subhead(self._parakeet_section, "Parakeet", pill="● Provider: parakeet")
 
-        ttk.Label(self.parakeet_endpoint_frame, text="Parakeet Endpoint:").grid(
-            row=0, column=0, sticky="w", pady=2
+        _field(self._parakeet_section, "Endpoint",
+               self.parakeet_endpoint_var, mono=True,
+               placeholder="http://192.168.1.234:8678")
+        _hint(self._parakeet_section, "Base URL, e.g. http://192.168.1.234:8678")
+
+        # "Use WebSocket streaming" — trow card style
+        stream_card = ctk.CTkFrame(
+            self._parakeet_section, fg_color=C_SURFACE, corner_radius=9,
+            border_width=1, border_color=C_BORDER_S,
         )
-        self.parakeet_endpoint_entry = ttk.Entry(
-            self.parakeet_endpoint_frame,
-            textvariable=self.parakeet_endpoint_var,
-            width=32,
-        )
-        self.parakeet_endpoint_entry.grid(
-            row=0, column=1, sticky="w", padx=(10, 0), pady=2
-        )
-        ttk.Label(
-            self.parakeet_endpoint_frame,
-            text="(Base URL such as http://192.168.1.234:8678)",
-            font=("TkDefaultFont", 8),
-            foreground="gray",
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
-        ttk.Checkbutton(
-            self.parakeet_endpoint_frame,
-            text="Use WebSocket streaming",
-            variable=self.parakeet_streaming_enabled_var,
+        stream_card.pack(fill="x", pady=(8, 4))
+        sc_inner = ctk.CTkFrame(stream_card, fg_color="transparent", corner_radius=0)
+        sc_inner.pack(fill="x", padx=(13, 12), pady=9)
+        sc_header = ctk.CTkFrame(sc_inner, fg_color="transparent", corner_radius=0)
+        sc_header.pack(fill="x")
+        ctk.CTkLabel(
+            sc_header, text="Use WebSocket streaming",
+            font=("Segoe UI", 13, "bold"), text_color=C_TEXT,
+            fg_color="transparent", anchor="w",
+        ).pack(side="left")
+        ctk.CTkSwitch(
+            sc_header, variable=self.parakeet_streaming_enabled_var,
+            text="", onvalue=True, offvalue=False,
             command=lambda: self.on_change() if self.on_change else None,
-        ).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=(2, 0))
-        ttk.Label(self.parakeet_endpoint_frame, text="VAD End Silence (ms):").grid(
-            row=3, column=0, sticky="w", pady=2
-        )
-        ttk.Entry(
-            self.parakeet_endpoint_frame,
-            textvariable=self.parakeet_streaming_vad_end_silence_ms_var,
-            width=8,
-        ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=2)
-        ttk.Label(self.parakeet_endpoint_frame, text="Max Chunk (s):").grid(
-            row=4, column=0, sticky="w", pady=2
-        )
-        ttk.Entry(
-            self.parakeet_endpoint_frame,
-            textvariable=self.parakeet_streaming_max_chunk_seconds_var,
-            width=8,
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=2)
-        ttk.Label(self.parakeet_endpoint_frame, text="Batch Size:").grid(
-            row=5, column=0, sticky="w", pady=2
-        )
-        ttk.Entry(
-            self.parakeet_endpoint_frame,
-            textvariable=self.parakeet_streaming_batch_size_var,
-            width=8,
-        ).grid(row=5, column=1, sticky="w", padx=(10, 0), pady=2)
-        ttk.Label(self.parakeet_endpoint_frame, text="Batch Window (ms):").grid(
-            row=6, column=0, sticky="w", pady=2
-        )
-        ttk.Entry(
-            self.parakeet_endpoint_frame,
-            textvariable=self.parakeet_streaming_batch_window_ms_var,
-            width=8,
-        ).grid(row=6, column=1, sticky="w", padx=(10, 0), pady=2)
+            progress_color=C_ACCENT, fg_color=C_SURFACE2,
+            button_color=C_TEXT, button_hover_color=C_TEXT,
+            switch_width=38, switch_height=20,
+        ).pack(side="right")
+        ctk.CTkLabel(
+            sc_inner, text="Stream audio live for lower latency",
+            font=("Segoe UI", 11), text_color=C_TEXT3, fg_color="transparent", anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
 
-        # Custom STT API Endpoint
-        self.custom_stt_endpoint_frame = ttk.Frame(self.frame)
-        self.custom_stt_endpoint_frame.grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=2
-        )
-        self.custom_stt_endpoint_frame.columnconfigure(1, weight=1)
+        # Streaming tuning
+        _subhead(self._parakeet_section, "Streaming tuning")
 
-        ttk.Label(self.custom_stt_endpoint_frame, text="Custom STT Endpoint:").grid(
-            row=0, column=0, sticky="w", pady=2
-        )
-        self.custom_stt_endpoint_entry = ttk.Entry(
-            self.custom_stt_endpoint_frame,
-            textvariable=self.custom_stt_endpoint_var,
-            width=32,
-        )
-        self.custom_stt_endpoint_entry.grid(
-            row=0, column=1, sticky="w", padx=(10, 0), pady=2
-        )
-        ttk.Label(
-            self.custom_stt_endpoint_frame,
-            text="(Required when STT provider is custom)",
-            font=("TkDefaultFont", 8),
-            foreground="gray",
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
+        grid = ctk.CTkFrame(self._parakeet_section, fg_color="transparent", corner_radius=0)
+        grid.pack(fill="x")
+        grid.columnconfigure((0, 1, 2, 3), weight=1)
 
-        # Custom refinement API Endpoint
-        self.custom_refinement_endpoint_frame = ttk.Frame(self.frame)
-        self.custom_refinement_endpoint_frame.grid(
-            row=6, column=0, columnspan=2, sticky="ew", pady=2
-        )
-        self.custom_refinement_endpoint_frame.columnconfigure(1, weight=1)
+        tuning = [
+            ("VAD End Silence (ms)", self.parakeet_streaming_vad_end_silence_ms_var),
+            ("Max Chunk (s)",         self.parakeet_streaming_max_chunk_seconds_var),
+            ("Batch Size",             self.parakeet_streaming_batch_size_var),
+            ("Batch Window (ms)",      self.parakeet_streaming_batch_window_ms_var),
+        ]
+        for col, (lbl, var) in enumerate(tuning):
+            cell = ctk.CTkFrame(grid, fg_color="transparent", corner_radius=0)
+            cell.grid(row=0, column=col, sticky="ew", padx=(0, 8 if col < 3 else 0))
+            ctk.CTkLabel(cell, text=lbl, font=("Segoe UI", 11),
+                         text_color=C_TEXT3, fg_color="transparent",
+                         anchor="w").pack(anchor="w", pady=(0, 3))
+            ctk.CTkEntry(cell, textvariable=var, font=FONT_MONO,
+                         fg_color=C_INPUT, border_color=C_BORDER,
+                         text_color=C_TEXT, height=33, corner_radius=7).pack(fill="x")
 
-        ttk.Label(
-            self.custom_refinement_endpoint_frame, text="Custom Refinement Endpoint:"
-        ).grid(row=0, column=0, sticky="w", pady=2)
-        self.custom_refinement_endpoint_entry = ttk.Entry(
-            self.custom_refinement_endpoint_frame,
-            textvariable=self.custom_refinement_endpoint_var,
-            width=32,
-        )
-        self.custom_refinement_endpoint_entry.grid(
-            row=0, column=1, sticky="w", padx=(10, 0), pady=2
-        )
-        ttk.Label(
-            self.custom_refinement_endpoint_frame,
-            text="(Required when refinement provider is custom)",
-            font=("TkDefaultFont", 8),
-            foreground="gray",
-        ).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=0)
+        # ── Custom STT section ────────────────────────────────────────────
+        self._custom_stt_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._custom_stt_section.pack(fill="x")
+        _field(self._custom_stt_section, "Custom STT Endpoint",
+               self.custom_stt_endpoint_var, mono=True)
+        _hint(self._custom_stt_section, "Required when STT provider is custom")
 
-        self.frame.columnconfigure(1, weight=1)
-
-        # Initial visibility update
         self._update_custom_endpoint_visibility()
 
-    def _on_provider_changed(self, event=None):
-        """Handle STT provider changes - show/hide appropriate API key fields."""
+    def _create_refinement_widgets(self):
+        f = self.refinement_frame
+
+        self.refinement_provider_combo = _combo(
+            f, "Refinement Provider", self.refinement_provider_var,
+            values=["openai", "cerebras", "gemini", "custom"],
+            command=lambda _v: self._on_refinement_provider_changed(),
+        )
+        self.refinement_model_combo = _combo(
+            f, "Refinement Model", self.refinement_model_var,
+            values=["gpt-5", "gpt-5-mini", "gpt-5-nano",
+                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+                    "gpt-4o-mini", "gpt-4o"],
+            command=lambda _v: self._on_refinement_model_changed(),
+            state="normal",
+        )
+
+        self._custom_ref_section = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+        self._custom_ref_section.pack(fill="x")
+        _field(self._custom_ref_section, "Custom Refinement Endpoint",
+               self.custom_refinement_endpoint_var, mono=True)
+        _hint(self._custom_ref_section, "Required when refinement provider is custom")
+
+    def _create_keys_widgets(self):
+        f = self.api_keys_frame
+        self._key_badges: dict[str, tuple[tk.StringVar, ctk.CTkLabel]] = {}
+        rows = [
+            ("OpenAI",   self.openai_api_key_var,   "sk-…"),
+            ("Deepgram", self.deepgram_api_key_var,  "Not set"),
+            ("Cerebras", self.cerebras_api_key_var,  "Not set"),
+            ("Gemini",   self.gemini_api_key_var,    "Not set"),
+            ("Custom",   self.custom_api_key_var,    "Not set"),
+        ]
+        for label, var, placeholder in rows:
+            row = ctk.CTkFrame(f, fg_color="transparent", corner_radius=0)
+            row.pack(fill="x", pady=(0, 8))
+
+            label_row = ctk.CTkFrame(row, fg_color="transparent", corner_radius=0)
+            label_row.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(label_row, text=label, font=FONT_SM, text_color=C_TEXT2,
+                         fg_color="transparent", anchor="w").pack(side="left")
+            badge = ctk.CTkLabel(
+                label_row, text=" SET ", font=("Segoe UI", 10, "bold"),
+                text_color=C_ACCENT2, fg_color=C_ACCENT_DIM, corner_radius=999,
+            )
+            self._key_badges[str(var)] = (var, badge)
+            var.trace_add("write", lambda *_a, v=var: self._refresh_key_badge(v))
+
+            entry_row = ctk.CTkFrame(row, fg_color="transparent", corner_radius=0)
+            entry_row.pack(fill="x")
+            entry = ctk.CTkEntry(
+                entry_row, textvariable=var, show="*",
+                font=("Consolas", 10), placeholder_text=placeholder,
+                fg_color=C_INPUT, border_color=C_BORDER, text_color=C_TEXT,
+                height=33, corner_radius=7,
+            )
+            entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+            def _make_toggle(e=entry):
+                def toggle():
+                    e.configure(show="" if e.cget("show") == "*" else "*")
+                return toggle
+
+            ctk.CTkButton(
+                entry_row, text="Show", command=_make_toggle(),
+                width=56, height=33, corner_radius=7, font=FONT_SM,
+                fg_color=C_SURFACE, text_color=C_TEXT2,
+                hover_color=C_SURFACE2, border_width=1, border_color=C_BORDER,
+            ).pack(side="left")
+
+    @property
+    def custom_stt_endpoint_frame(self):
+        return self._custom_stt_section
+
+    # ── API-key "SET" badges ──────────────────────────────────────────────────
+
+    def _refresh_key_badge(self, var: tk.StringVar):
+        entry = getattr(self, "_key_badges", {}).get(str(var))
+        if not entry:
+            return
+        _var, badge = entry
+        if var.get().strip():
+            badge.pack(side="left", padx=(7, 0))
+        else:
+            badge.pack_forget()
+
+    def _refresh_all_key_badges(self):
+        for var, _badge in getattr(self, "_key_badges", {}).values():
+            self._refresh_key_badge(var)
+
+    # ── Refinement enable/disable (driven by master toggle) ───────────────────
+
+    def set_refinement_enabled(self, enabled: bool):
+        """Gray out / re-enable the refinement provider, model and endpoint."""
+        state = "normal" if enabled else "disabled"
+        if self.refinement_provider_combo:
+            self.refinement_provider_combo.configure(state=state)
+        if self.refinement_model_combo:
+            self.refinement_model_combo.configure(state=state)
+        for child in (self._custom_ref_section.winfo_children() if self._custom_ref_section else []):
+            if isinstance(child, ctk.CTkEntry):
+                child.configure(state="normal" if enabled else "disabled")
+
+    # ── Visibility helpers ────────────────────────────────────────────────────
+
+    def _update_custom_endpoint_visibility(self):
+        if self._parakeet_section:
+            if self.stt_provider_var.get() == "parakeet":
+                self._parakeet_section.pack(fill="x")
+            else:
+                self._parakeet_section.pack_forget()
+
+        if self._custom_stt_section:
+            if self.stt_provider_var.get() == "custom":
+                self._custom_stt_section.pack(fill="x")
+            else:
+                self._custom_stt_section.pack_forget()
+
+        if self._custom_ref_section:
+            if self.refinement_provider_var.get() == "custom":
+                self._custom_ref_section.pack(fill="x")
+            else:
+                self._custom_ref_section.pack_forget()
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    def _on_provider_changed(self):
         self._update_stt_model_options()
         self._update_custom_endpoint_visibility()
         if self.on_change:
             self.on_change()
 
-    def _on_stt_model_changed(self, event=None):
-        """Handle STT model changes - save to provider-specific variable."""
-        provider_value = self.stt_provider_var.get()
-        current_model = self.stt_model_var.get()
+    def _on_stt_model_changed(self):
+        p = self.stt_provider_var.get()
+        m = self.stt_model_var.get()
+        if p == "openai":      self.openai_stt_model   = m
+        elif p == "deepgram":  self.deepgram_stt_model  = m
+        elif p == "parakeet":  self.parakeet_stt_model  = m
+        elif p == "custom":    self.custom_stt_model    = m
 
-        # Save the model selection to the appropriate provider-specific variable
-        if provider_value == "openai":
-            self.openai_stt_model = current_model
-        elif provider_value == "deepgram":
-            self.deepgram_stt_model = current_model
-        elif provider_value == "parakeet":
-            self.parakeet_stt_model = current_model
-        elif provider_value == "custom":
-            self.custom_stt_model = current_model
-
-    def _on_refinement_provider_changed(self, event=None):
-        """Handle refinement provider changes - update model options."""
+    def _on_refinement_provider_changed(self):
         self._update_refinement_model_options()
         self._update_custom_endpoint_visibility()
         if self.on_change:
             self.on_change()
 
-    def _update_custom_endpoint_visibility(self):
-        """Show or hide custom endpoint fields based on selected providers."""
-        if self.stt_provider_var.get() == "custom":
-            self.custom_stt_endpoint_frame.grid()
-        else:
-            self.custom_stt_endpoint_frame.grid_remove()
-
-        if self.stt_provider_var.get() == "parakeet":
-            self.parakeet_endpoint_frame.grid()
-        else:
-            self.parakeet_endpoint_frame.grid_remove()
-
-        if self.refinement_provider_var.get() == "custom":
-            self.custom_refinement_endpoint_frame.grid()
-        else:
-            self.custom_refinement_endpoint_frame.grid_remove()
-
-    def _on_refinement_model_changed(self, event=None):
-        """Handle refinement model changes - save to provider-specific variable."""
-        provider_value = self.refinement_provider_var.get()
-        current_model = self.refinement_model_var.get()
-
-        # Save the model selection to the appropriate provider-specific variable
-        if provider_value == "openai":
-            self.openai_refinement_model = current_model
-        elif provider_value == "cerebras":
-            self.cerebras_refinement_model = current_model
-        elif provider_value == "gemini":
-            self.gemini_refinement_model = current_model
-        elif provider_value == "custom":
-            self.custom_refinement_model = current_model
+    def _on_refinement_model_changed(self):
+        p = self.refinement_provider_var.get()
+        m = self.refinement_model_var.get()
+        if p == "openai":      self.openai_refinement_model   = m
+        elif p == "cerebras":  self.cerebras_refinement_model = m
+        elif p == "gemini":    self.gemini_refinement_model   = m
+        elif p == "custom":    self.custom_refinement_model   = m
 
     def _update_stt_model_options(self):
-        """Update STT model options based on selected provider."""
         if not self.stt_model_combo:
             return
+        p = self.stt_provider_var.get()
+        cur = self.stt_model_var.get()
 
-        provider_value = self.stt_provider_var.get()
-        current_model = self.stt_model_var.get()
+        openai  = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
+        deepgram = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
+        parakeet = ["parakeet-tdt-0.6b-v2"]
+        custom  = ["whisper-1", "whisper-large-v3", "Systran/faster-whisper-large-v3"]
 
-        # Define model lists
-        openai_models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
-        deepgram_models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
-        parakeet_models = ["parakeet-tdt-0.6b-v2"]
-        custom_models = [
-            "whisper-1",
-            "whisper-large-v3",
-            "Systran/faster-whisper-large-v3",
-        ]
+        if cur in openai:   self.openai_stt_model   = cur
+        elif cur in deepgram: self.deepgram_stt_model = cur
+        elif cur in parakeet: self.parakeet_stt_model = cur
+        elif cur in custom:   self.custom_stt_model   = cur
 
-        # Save the current model to the appropriate provider-specific variable
-        # This preserves the selection before we change providers
-        if current_model in openai_models:
-            self.openai_stt_model = current_model
-        elif current_model in deepgram_models:
-            self.deepgram_stt_model = current_model
-        elif current_model in parakeet_models:
-            self.parakeet_stt_model = current_model
-        elif current_model in custom_models:
-            self.custom_stt_model = current_model
-
-        # Update model options and restore provider-specific selection
-        if provider_value == "openai":
-            models = openai_models
-            # Restore the previously selected OpenAI model
-            if self.openai_stt_model in models:
-                self.stt_model_var.set(self.openai_stt_model)
-            else:
-                self.stt_model_var.set(models[0])
-        elif provider_value == "deepgram":
-            models = deepgram_models
-            # Restore the previously selected Deepgram model
-            if self.deepgram_stt_model in models:
-                self.stt_model_var.set(self.deepgram_stt_model)
-            else:
-                self.stt_model_var.set(models[0])
-        elif provider_value == "parakeet":
-            models = parakeet_models
-            if self.parakeet_stt_model in models:
-                self.stt_model_var.set(self.parakeet_stt_model)
-            else:
-                self.stt_model_var.set(models[0])
-        elif provider_value == "custom":
-            models = custom_models
-            # Restore the previously selected Custom model
-            if self.custom_stt_model in models:
-                self.stt_model_var.set(self.custom_stt_model)
-            else:
-                self.stt_model_var.set(models[0])
-        else:
-            models = []
-
-        self.stt_model_combo["values"] = models
+        models_map = {
+            "openai": (openai, self.openai_stt_model),
+            "deepgram": (deepgram, self.deepgram_stt_model),
+            "parakeet": (parakeet, self.parakeet_stt_model),
+            "custom": (custom, self.custom_stt_model),
+        }
+        models, remembered = models_map.get(p, ([], ""))
+        self.stt_model_combo.configure(values=models)
+        self.stt_model_var.set(remembered if remembered in models else (models[0] if models else ""))
 
     def _update_refinement_model_options(self):
-        """Update refinement model options based on selected provider."""
         if not self.refinement_model_combo:
             return
+        p = self.refinement_provider_var.get()
+        cur = self.refinement_model_var.get()
 
-        provider_value = self.refinement_provider_var.get()
-        current_model = self.refinement_model_var.get()
+        openai   = ["gpt-5", "gpt-5-mini", "gpt-5-nano",
+                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini", "gpt-4o"]
+        cerebras = ["llama-3.3-70b", "qwen-3-235b-a22b-instruct-2507",
+                    "qwen-3-32b", "llama3.1-8b", "gpt-oss-120b"]
+        gemini   = ["gemini-3-flash-preview", "gemini-3-pro-preview",
+                    "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-06-05"]
+        custom   = ["llama3", "mistral", "mixtral", "gemma"]
 
-        # Define model lists
-        openai_models = [
-            "gpt-5",
-            "gpt-5-mini",
-            "gpt-5-nano",
-            "gpt-4.1",
-            "gpt-4.1-mini",
-            "gpt-4.1-nano",
-            "gpt-4o-mini",
-            "gpt-4o",
-        ]
-        cerebras_models = [
-            "llama-3.3-70b",
-            "qwen-3-235b-a22b-instruct-2507",
-            "qwen-3-32b",
-            "llama3.1-8b",
-            "gpt-oss-120b",
-        ]
-        gemini_models = [
-            "gemini-3-flash-preview",
-            "gemini-3-pro-preview",
-            "gemini-2.5-flash-preview-05-20",
-            "gemini-2.5-pro-preview-06-05",
-        ]
-        custom_models = [
-            "llama3",
-            "mistral",
-            "mixtral",
-            "gemma",
-        ]
+        if cur in openai:   self.openai_refinement_model   = cur
+        elif cur in cerebras: self.cerebras_refinement_model = cur
+        elif cur in gemini:   self.gemini_refinement_model   = cur
+        elif cur in custom:   self.custom_refinement_model   = cur
 
-        # Save the current model to the appropriate provider-specific variable
-        if current_model in openai_models:
-            self.openai_refinement_model = current_model
-        elif current_model in cerebras_models:
-            self.cerebras_refinement_model = current_model
-        elif current_model in gemini_models:
-            self.gemini_refinement_model = current_model
-        elif current_model in custom_models:
-            self.custom_refinement_model = current_model
+        models_map = {
+            "openai":   (openai,   self.openai_refinement_model),
+            "cerebras": (cerebras, self.cerebras_refinement_model),
+            "gemini":   (gemini,   self.gemini_refinement_model),
+            "custom":   (custom,   self.custom_refinement_model),
+        }
+        models, remembered = models_map.get(p, ([], ""))
+        self.refinement_model_combo.configure(values=models)
+        self.refinement_model_var.set(remembered if remembered in models else (models[0] if models else ""))
 
-        # Update model options and restore provider-specific selection
-        if provider_value == "openai":
-            models = openai_models
-            # Restore the previously selected OpenAI model
-            if self.openai_refinement_model in models:
-                self.refinement_model_var.set(self.openai_refinement_model)
-            else:
-                self.refinement_model_var.set(models[0])
-        elif provider_value == "cerebras":
-            models = cerebras_models
-            # Restore the previously selected Cerebras model
-            if self.cerebras_refinement_model in models:
-                self.refinement_model_var.set(self.cerebras_refinement_model)
-            else:
-                self.refinement_model_var.set(models[0])
-        elif provider_value == "gemini":
-            models = gemini_models
-            # Restore the previously selected Gemini model
-            if self.gemini_refinement_model in models:
-                self.refinement_model_var.set(self.gemini_refinement_model)
-            else:
-                self.refinement_model_var.set(models[0])
-        elif provider_value == "custom":
-            models = custom_models
-            # Restore the previously selected Custom model
-            if self.custom_refinement_model in models:
-                self.refinement_model_var.set(self.custom_refinement_model)
-            else:
-                self.refinement_model_var.set(models[0])
-        else:
-            models = []
+    # ── Combobox options only (used by set_values) ────────────────────────────
 
-        self.refinement_model_combo["values"] = models
+    def _update_combobox_options_only(self):
+        if self.stt_model_combo:
+            p = self.stt_provider_var.get()
+            models = {
+                "openai":   ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+                "deepgram": ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"],
+                "parakeet": ["parakeet-tdt-0.6b-v2"],
+                "custom":   ["whisper-1", "whisper-large-v3", "Systran/faster-whisper-large-v3"],
+            }.get(p, [])
+            self.stt_model_combo.configure(values=models)
 
-    def get_values(self) -> dict[str, str]:
-        """
-        Get the current API configuration values.
+        if self.refinement_model_combo:
+            p = self.refinement_provider_var.get()
+            models = {
+                "openai":   ["gpt-5", "gpt-5-mini", "gpt-5-nano",
+                             "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini", "gpt-4o"],
+                "cerebras": ["llama-3.3-70b", "qwen-3-235b-a22b-instruct-2507",
+                             "qwen-3-32b", "llama3.1-8b"],
+                "gemini":   ["gemini-3-flash-preview", "gemini-3-pro-preview",
+                             "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-06-05"],
+                "custom":   ["llama3", "mistral", "mixtral", "gemma"],
+            }.get(p, [])
+            self.refinement_model_combo.configure(values=models)
 
-        Returns:
-            Dictionary with API configuration values
-        """
+    # ── Public interface ───────────────────────────────────────────────────────
+
+    def get_values(self) -> dict:
         return {
             "stt_provider": self.stt_provider_var.get(),
             "openai_api_key": self.openai_api_key_var.get().strip(),
@@ -691,53 +507,14 @@ class APISection:
 
     def set_values(
         self,
-        stt_provider: str,
-        openai_api_key: str,
-        deepgram_api_key: str,
-        cerebras_api_key: str,
-        gemini_api_key: str,
-        custom_api_key: str,
-        stt_model: str,
-        refinement_provider: str,
-        refinement_model: str,
-        custom_endpoint: str = "",
-        custom_stt_endpoint: str = "",
-        custom_refinement_endpoint: str = "",
-        parakeet_endpoint: str = "http://localhost:8000",
-        parakeet_streaming_enabled: bool = False,
-        parakeet_streaming_vad_end_silence_ms: int = 250,
-        parakeet_streaming_max_chunk_seconds: float = 8.0,
-        parakeet_streaming_batch_size: int = 4,
-        parakeet_streaming_batch_window_ms: int = 15,
+        stt_provider, openai_api_key, deepgram_api_key, cerebras_api_key,
+        gemini_api_key, custom_api_key, stt_model, refinement_provider,
+        refinement_model, custom_endpoint="", custom_stt_endpoint="",
+        custom_refinement_endpoint="", parakeet_endpoint="http://localhost:8000",
+        parakeet_streaming_enabled=False, parakeet_streaming_vad_end_silence_ms=250,
+        parakeet_streaming_max_chunk_seconds=8.0, parakeet_streaming_batch_size=4,
+        parakeet_streaming_batch_window_ms=15,
     ):
-        """
-        Set the API configuration values.
-
-        This method sets values directly from loaded config without triggering
-        model update logic. The combobox values are updated to match the provider,
-        then the exact model from config is set.
-
-        Args:
-            stt_provider: STT provider name
-            openai_api_key: OpenAI API key
-            deepgram_api_key: Deepgram API key
-            cerebras_api_key: Cerebras API key
-            gemini_api_key: Gemini API key
-            custom_api_key: Custom API key
-            stt_model: STT model name
-            refinement_provider: Refinement provider name
-            refinement_model: Refinement model name
-            custom_endpoint: Legacy custom API endpoint URL
-            custom_stt_endpoint: Custom STT API endpoint URL
-            custom_refinement_endpoint: Custom refinement API endpoint URL
-            parakeet_endpoint: Parakeet FastAPI service URL
-            parakeet_streaming_enabled: Use Parakeet WebSocket streaming
-            parakeet_streaming_vad_end_silence_ms: VAD trailing silence threshold
-            parakeet_streaming_max_chunk_seconds: VAD maximum chunk duration
-            parakeet_streaming_batch_size: Transcription micro-batch size
-            parakeet_streaming_batch_window_ms: Transcription micro-batch gather window
-        """
-        # Set API keys
         self.openai_api_key_var.set(openai_api_key)
         self.deepgram_api_key_var.set(deepgram_api_key)
         self.cerebras_api_key_var.set(cerebras_api_key)
@@ -745,315 +522,67 @@ class APISection:
         self.custom_api_key_var.set(custom_api_key)
         self.custom_endpoint_var.set(custom_endpoint)
         self.custom_stt_endpoint_var.set(custom_stt_endpoint or custom_endpoint)
-        self.custom_refinement_endpoint_var.set(
-            custom_refinement_endpoint or custom_endpoint
-        )
+        self.custom_refinement_endpoint_var.set(custom_refinement_endpoint or custom_endpoint)
         self.parakeet_endpoint_var.set(parakeet_endpoint or "http://localhost:8000")
         self.parakeet_streaming_enabled_var.set(parakeet_streaming_enabled)
-        self.parakeet_streaming_vad_end_silence_ms_var.set(
-            str(parakeet_streaming_vad_end_silence_ms)
-        )
-        self.parakeet_streaming_max_chunk_seconds_var.set(
-            str(parakeet_streaming_max_chunk_seconds)
-        )
-        self.parakeet_streaming_batch_size_var.set(
-            str(parakeet_streaming_batch_size)
-        )
-        self.parakeet_streaming_batch_window_ms_var.set(
-            str(parakeet_streaming_batch_window_ms)
-        )
+        self.parakeet_streaming_vad_end_silence_ms_var.set(str(parakeet_streaming_vad_end_silence_ms))
+        self.parakeet_streaming_max_chunk_seconds_var.set(str(parakeet_streaming_max_chunk_seconds))
+        self.parakeet_streaming_batch_size_var.set(str(parakeet_streaming_batch_size))
+        self.parakeet_streaming_batch_window_ms_var.set(str(parakeet_streaming_batch_window_ms))
 
-        # Store provider-specific models BEFORE setting providers
-        # This ensures the update methods will use these values
-        if stt_provider == "openai":
-            self.openai_stt_model = stt_model
-        elif stt_provider == "deepgram":
-            self.deepgram_stt_model = stt_model
-        elif stt_provider == "parakeet":
-            self.parakeet_stt_model = stt_model
-        elif stt_provider == "custom":
-            self.custom_stt_model = stt_model
+        if stt_provider == "openai":     self.openai_stt_model   = stt_model
+        elif stt_provider == "deepgram": self.deepgram_stt_model  = stt_model
+        elif stt_provider == "parakeet": self.parakeet_stt_model  = stt_model
+        elif stt_provider == "custom":   self.custom_stt_model    = stt_model
 
-        if refinement_provider == "openai":
-            self.openai_refinement_model = refinement_model
-        elif refinement_provider == "cerebras":
-            self.cerebras_refinement_model = refinement_model
-        elif refinement_provider == "gemini":
-            self.gemini_refinement_model = refinement_model
-        elif refinement_provider == "custom":
-            self.custom_refinement_model = refinement_model
+        if refinement_provider == "openai":     self.openai_refinement_model   = refinement_model
+        elif refinement_provider == "cerebras": self.cerebras_refinement_model = refinement_model
+        elif refinement_provider == "gemini":   self.gemini_refinement_model   = refinement_model
+        elif refinement_provider == "custom":   self.custom_refinement_model   = refinement_model
 
-        # Set providers (this triggers combobox value list updates)
         self.stt_provider_var.set(stt_provider)
         self.refinement_provider_var.set(refinement_provider)
-
-        # Update visibility of custom endpoint
         self._update_custom_endpoint_visibility()
-
-        # Update combobox options to match the providers
         self._update_combobox_options_only()
-
-        # Now set the exact model values from config
-        # This must happen AFTER the combobox options are updated
         self.stt_model_var.set(stt_model)
         self.refinement_model_var.set(refinement_model)
-
-    def _update_combobox_options_only(self):
-        """Update combobox dropdown options without changing selected values."""
-        # Update STT model options
-        if self.stt_model_combo:
-            provider = self.stt_provider_var.get()
-            if provider == "openai":
-                models = ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
-            elif provider == "deepgram":
-                models = ["nova-3", "nova-2", "base", "enhanced", "whisper-medium"]
-            elif provider == "parakeet":
-                models = ["parakeet-tdt-0.6b-v2"]
-            elif provider == "custom":
-                models = [
-                    "whisper-1",
-                    "whisper-large-v3",
-                    "Systran/faster-whisper-large-v3",
-                ]
-            else:
-                models = []
-            self.stt_model_combo["values"] = models
-
-        # Update refinement model options
-        if self.refinement_model_combo:
-            provider = self.refinement_provider_var.get()
-            if provider == "openai":
-                models = [
-                    "gpt-5",
-                    "gpt-5-mini",
-                    "gpt-5-nano",
-                    "gpt-4.1",
-                    "gpt-4.1-mini",
-                    "gpt-4.1-nano",
-                    "gpt-4o-mini",
-                    "gpt-4o",
-                ]
-            elif provider == "cerebras":
-                models = [
-                    "llama-3.3-70b",
-                    "qwen-3-235b-a22b-instruct-2507",
-                    "qwen-3-32b",
-                    "llama3.1-8b",
-                ]
-            elif provider == "gemini":
-                models = [
-                    "gemini-3-flash-preview",
-                    "gemini-3-pro-preview",
-                    "gemini-2.5-flash-preview-05-20",
-                    "gemini-2.5-pro-preview-06-05",
-                ]
-            elif provider == "custom":
-                models = [
-                    "llama3",
-                    "mistral",
-                    "mixtral",
-                    "gemma",
-                ]
-            else:
-                models = []
-            self.refinement_model_combo["values"] = models
+        self._refresh_all_key_badges()
 
     def test_api_keys(self) -> str:
-        """
-        Test all provider API keys and return a comprehensive status report.
+        v = self.get_values()
+        lines = ["API Key Validation Status:\n"]
 
-        Returns:
-            Multi-line string with test results
-        """
-        values = self.get_values()
-        status_lines = ["API Key Validation Status:\n"]
+        def _check(key, validator, name, selected_ctx):
+            marker, status = "[ ]", "Not configured"
+            if key:
+                try:
+                    validator(key)
+                    marker, status = "[OK]", "VALID"
+                except Exception as e:
+                    marker, status = "[X]", str(e)
+            sel = f" ({selected_ctx})" if selected_ctx else ""
+            lines.append(f"\n{marker} {name}{sel}:")
+            lines.append(f"  Status: {status}")
 
-        # Test OpenAI
-        openai_status = "Not configured"
-        openai_prefix = "[ ]"
-        if values["openai_api_key"]:
-            try:
-                validate_openai_api_key(values["openai_api_key"])
-                openai_status = "VALID"
-                openai_prefix = "[OK]"
-            except Exception as e:
-                openai_status = str(e)
-                openai_prefix = "[X]"
+        _check(v["openai_api_key"],   validate_openai_api_key,   "OpenAI",
+               "Selected STT" if v["stt_provider"] == "openai" else "")
+        _check(v["deepgram_api_key"], validate_deepgram_api_key, "Deepgram",
+               "Selected STT" if v["stt_provider"] == "deepgram" else "")
+        _check(v["cerebras_api_key"], validate_cerebras_api_key, "Cerebras",
+               "Selected Refinement" if v["refinement_provider"] == "cerebras" else "")
+        _check(v["gemini_api_key"],   validate_gemini_api_key,   "Gemini",
+               "Selected Refinement" if v["refinement_provider"] == "gemini" else "")
 
-        selected_marker = (
-            " (Selected STT Model)" if values["stt_provider"] == "openai" else ""
-        )
-        status_lines.append(f"\n{openai_prefix} OpenAI{selected_marker}:")
-        status_lines.append(f"  Status: {openai_status}")
-        if values["openai_api_key"]:
-            status_lines.append(
-                f"  Key: {'*' * min(len(values['openai_api_key']), 20)}"
-            )
-
-        # Test Deepgram
-        deepgram_status = "Not configured"
-        deepgram_prefix = "[ ]"
-        if values["deepgram_api_key"]:
-            try:
-                validate_deepgram_api_key(values["deepgram_api_key"])
-                deepgram_status = "VALID"
-                deepgram_prefix = "[OK]"
-            except Exception as e:
-                deepgram_status = str(e)
-                deepgram_prefix = "[X]"
-
-        selected_marker = (
-            " (Selected STT Model)" if values["stt_provider"] == "deepgram" else ""
-        )
-        status_lines.append(f"\n{deepgram_prefix} Deepgram{selected_marker}:")
-        status_lines.append(f"  Status: {deepgram_status}")
-        if values["deepgram_api_key"]:
-            status_lines.append(
-                f"  Key: {'*' * min(len(values['deepgram_api_key']), 20)}"
-            )
-
-        # Test Cerebras
-        cerebras_status = "Not configured"
-        cerebras_prefix = "[ ]"
-        if values["cerebras_api_key"]:
-            try:
-                validate_cerebras_api_key(values["cerebras_api_key"])
-                cerebras_status = "VALID"
-                cerebras_prefix = "[OK]"
-            except Exception as e:
-                cerebras_status = str(e)
-                cerebras_prefix = "[X]"
-
-        selected_marker = (
-            " (Selected Refinement Model)"
-            if values["refinement_provider"] == "cerebras"
-            else ""
-        )
-        status_lines.append(f"\n{cerebras_prefix} Cerebras{selected_marker}:")
-        status_lines.append(f"  Status: {cerebras_status}")
-        if values["cerebras_api_key"]:
-            status_lines.append(
-                f"  Key: {'*' * min(len(values['cerebras_api_key']), 20)}"
-            )
-
-        # Test Gemini
-        gemini_status = "Not configured"
-        gemini_prefix = "[ ]"
-        if values["gemini_api_key"]:
-            try:
-                validate_gemini_api_key(values["gemini_api_key"])
-                gemini_status = "VALID"
-                gemini_prefix = "[OK]"
-            except Exception as e:
-                gemini_status = str(e)
-                gemini_prefix = "[X]"
-
-        selected_marker = (
-            " (Selected Refinement Model)"
-            if values["refinement_provider"] == "gemini"
-            else ""
-        )
-        status_lines.append(f"\n{gemini_prefix} Gemini{selected_marker}:")
-        status_lines.append(f"  Status: {gemini_status}")
-        if values["gemini_api_key"]:
-            status_lines.append(
-                f"  Key: {'*' * min(len(values['gemini_api_key']), 20)}"
-            )
-
-        # Custom provider info (no validation - endpoints vary too widely)
-        selected_contexts = []
-        if values["stt_provider"] == "custom":
-            selected_contexts.append("Selected STT Model")
-        if values["refinement_provider"] == "custom":
-            selected_contexts.append("Selected Refinement Model")
-        selected_marker = (
-            f" ({', '.join(selected_contexts)})" if selected_contexts else ""
-        )
-        if (
-            values["custom_api_key"]
-            or values["custom_stt_endpoint"]
-            or values["custom_refinement_endpoint"]
-        ):
-            status_lines.append(f"\n[ ] Custom{selected_marker}:")
-            status_lines.append("  Status: Configured (not validated)")
-            if values["custom_api_key"]:
-                status_lines.append(
-                    f"  Key: {'*' * min(len(values['custom_api_key']), 20)}"
-                )
-            if values["custom_stt_endpoint"]:
-                status_lines.append(f"  STT Endpoint: {values['custom_stt_endpoint']}")
-            if values["custom_refinement_endpoint"]:
-                status_lines.append(
-                    f"  Refinement Endpoint: {values['custom_refinement_endpoint']}"
-                )
+        if v["custom_api_key"] or v["custom_stt_endpoint"] or v["custom_refinement_endpoint"]:
+            lines.append("\n[ ] Custom:\n  Status: Configured (not validated)")
         else:
-            status_lines.append(f"\n[ ] Custom{selected_marker}:")
-            status_lines.append("  Status: Not configured")
+            lines.append("\n[ ] Custom:\n  Status: Not configured")
 
-        # Add configuration summary
-        status_lines.append("\n" + "-" * 40)
-        status_lines.append("\nCurrent Settings:")
-        status_lines.append(f"  STT Provider: {values['stt_provider']}")
-        status_lines.append(f"  STT Model: {values['stt_model']}")
-        if values["stt_provider"] == "parakeet":
-            status_lines.append(f"  Parakeet Endpoint: {values['parakeet_endpoint']}")
-            status_lines.append(
-                f"  Parakeet Streaming: {'Enabled' if values['parakeet_streaming_enabled'] else 'Disabled'}"
-            )
-            status_lines.append(
-                "  VAD End Silence: "
-                f"{values['parakeet_streaming_vad_end_silence_ms']} ms"
-            )
-            status_lines.append(
-                "  Max Chunk: "
-                f"{values['parakeet_streaming_max_chunk_seconds']} s"
-            )
-            status_lines.append(
-                f"  Batch Size: {values['parakeet_streaming_batch_size']}"
-            )
-            status_lines.append(
-                "  Batch Window: "
-                f"{values['parakeet_streaming_batch_window_ms']} ms"
-            )
-        status_lines.append(f"  Refinement Provider: {values['refinement_provider']}")
-        status_lines.append(f"  Refinement Model: {values['refinement_model']}")
-
-        # Add warning if selected providers are not valid
-        if values["stt_provider"] == "openai" and openai_prefix == "[X]":
-            status_lines.append(
-                "\n*** WARNING: Selected STT provider (OpenAI) has an invalid API key!"
-            )
-        elif values["stt_provider"] == "deepgram" and deepgram_prefix == "[X]":
-            status_lines.append(
-                "\n*** WARNING: Selected STT provider (Deepgram) has an invalid API key!"
-            )
-        elif values["stt_provider"] == "custom" and not values["custom_stt_endpoint"]:
-            status_lines.append(
-                "\n*** WARNING: Selected STT provider (Custom) needs an STT endpoint!"
-            )
-        elif values["stt_provider"] == "parakeet" and not values["parakeet_endpoint"]:
-            status_lines.append(
-                "\n*** WARNING: Selected STT provider (Parakeet) needs a Parakeet endpoint!"
-            )
-
-        if values["refinement_provider"] == "openai" and openai_prefix == "[X]":
-            status_lines.append(
-                "\n*** WARNING: Selected refinement provider (OpenAI) has an invalid API key!"
-            )
-        elif values["refinement_provider"] == "cerebras" and cerebras_prefix == "[X]":
-            status_lines.append(
-                "\n*** WARNING: Selected refinement provider (Cerebras) has an invalid API key!"
-            )
-        elif values["refinement_provider"] == "gemini" and gemini_prefix == "[X]":
-            status_lines.append(
-                "\n*** WARNING: Selected refinement provider (Gemini) has an invalid API key!"
-            )
-        elif (
-            values["refinement_provider"] == "custom"
-            and not values["custom_refinement_endpoint"]
-        ):
-            status_lines.append(
-                "\n*** WARNING: Selected refinement provider (Custom) needs a refinement endpoint!"
-            )
-
-        return "\n".join(status_lines)
+        lines += [
+            "\n" + "-" * 40,
+            f"\nSTT Provider: {v['stt_provider']}",
+            f"STT Model: {v['stt_model']}",
+            f"Refinement Provider: {v['refinement_provider']}",
+            f"Refinement Model: {v['refinement_model']}",
+        ]
+        return "\n".join(lines)
