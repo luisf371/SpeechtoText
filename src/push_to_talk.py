@@ -49,7 +49,12 @@ from src.provider_registry import (
     refinement_provider_names,
     stt_provider_names,
 )
-from src.utils import play_start_feedback, play_stop_feedback
+from src.utils import (
+    play_start_feedback,
+    play_stop_feedback,
+    prewarm_feedback_audio,
+    shutdown_feedback_audio,
+)
 from src.exceptions import (
     ConfigurationError,
 )
@@ -689,6 +694,9 @@ class PushToTalkApp:
 
         self.hotkey_service.start_service()
 
+        if self.config.enable_audio_feedback:
+            prewarm_feedback_audio()
+
         if self.config.is_parakeet_streaming_active():
             try:
                 self._ensure_streaming_insert_worker()
@@ -758,7 +766,8 @@ class PushToTalkApp:
         if self.audio_recorder:
             self.audio_recorder.shutdown()
 
-        # No cleanup needed for audio feedback utility functions
+        # Release the shared feedback PyAudio interface
+        shutdown_feedback_audio()
         self._set_recording_mode("idle")
 
         logger.info("PushToTalk application stopped")

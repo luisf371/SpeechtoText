@@ -92,7 +92,12 @@ class TextInserter:
         """Insert text by copying to clipboard and pasting."""
         original_clipboard = None
         try:
-            original_clipboard = pyperclip.paste()
+            # On Linux we intentionally leave the inserted text on the clipboard
+            # (see _restore_clipboard), so reading the previous contents here is
+            # pure overhead: pyperclip.paste() shells out to xclip/xsel, spawning
+            # a subprocess before every paste (and every streaming segment).
+            if not sys.platform.startswith("linux"):
+                original_clipboard = pyperclip.paste()
             pyperclip.copy(text)
 
             time.sleep(TEXT_INSERTION_DELAY_AFTER_COPY_SECONDS)

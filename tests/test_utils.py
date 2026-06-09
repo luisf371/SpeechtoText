@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -66,7 +66,7 @@ def test_play_wav_feedback_logs_error_on_failure(tmp_path, monkeypatch, mock_log
 
 
 def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger):
-    """Feedback playback should stream WAV frames through PyAudio."""
+    """Feedback playback should stream WAV frames through the shared PyAudio."""
 
     audio_path = tmp_path / "start.wav"
     audio_path.write_bytes(b"data")
@@ -83,19 +83,31 @@ def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger)
     stream = audio.open.return_value
 
     monkeypatch.setattr(utils.wave, "open", MagicMock(return_value=wav_file))
-    monkeypatch.setattr(utils.pyaudio, "PyAudio", MagicMock(return_value=audio))
+    # Reset the cached interface so this test controls construction.
+    monkeypatch.setattr(utils, "_feedback_audio_interface", None)
+    pyaudio_ctor = MagicMock(return_value=audio)
+    monkeypatch.setattr(utils.pyaudio, "PyAudio", pyaudio_ctor)
 
     utils._play_wav_feedback(audio_path, "start")
+    # A second playback should reuse the same interface (no re-construction).
+    wav_file.readframes.side_effect = [b"chunk", b""]
+    utils._play_wav_feedback(audio_path, "start")
 
-    audio.open.assert_called_once_with(
+    pyaudio_ctor.assert_called_once()
+    assert audio.open.call_count == 2
+    audio.open.assert_called_with(
         format="format",
         channels=1,
         rate=16000,
         output=True,
     )
-    stream.write.assert_called_once_with(b"chunk")
-    stream.stop_stream.assert_called_once()
-    stream.close.assert_called_once()
+    assert stream.write.call_args_list == [call(b"chunk"), call(b"chunk")]
+    assert stream.stop_stream.call_count == 2
+    assert stream.close.call_count == 2
+    # The shared interface is not terminated per playback.
+    audio.terminate.assert_not_called()
+
+    utils.shutdown_feedback_audio()
     audio.terminate.assert_called_once()
     mock_logger.error.assert_not_called()
 

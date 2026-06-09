@@ -13,6 +13,59 @@ _ASSETS_DIR = Path(__file__).parent / "assets" / "audio"
 _START_SOUND_PATH = _ASSETS_DIR / "start_feedback.wav"
 _STOP_SOUND_PATH = _ASSETS_DIR / "stop_feedback.wav"
 
+# A single PyAudio instance is shared across all feedback beeps. Constructing
+# PyAudio() calls Pa_Initialize(), which enumerates every audio device on the
+# system (often 100ms+ and, on ALSA, contends with the capture stream being
+# opened at record-start). Reusing one instance avoids paying that on every
+# beep. Playback is serialized by the lock so concurrent beeps don't race on
+# the shared interface.
+_FEEDBACK_AUDIO_LOCK = threading.Lock()
+_feedback_audio_interface = None
+
+
+def _get_feedback_audio_interface():
+    """Return the shared feedback PyAudio interface, creating it on first use."""
+    global _feedback_audio_interface
+    if _feedback_audio_interface is None:
+        from src.audio_recorder import _suppress_native_stderr
+
+        with _suppress_native_stderr():
+            _feedback_audio_interface = pyaudio.PyAudio()
+    return _feedback_audio_interface
+
+
+def prewarm_feedback_audio():
+    """Create the shared feedback interface ahead of the first recording.
+
+    Constructing PyAudio enumerates audio devices; doing it at startup (when no
+    capture stream is open) keeps the first beep fast and avoids contending with
+    the capture device the moment the user starts their first recording.
+    """
+
+    def _warm():
+        try:
+            with _FEEDBACK_AUDIO_LOCK:
+                _get_feedback_audio_interface()
+        except Exception as e:
+            logger.debug(f"Feedback audio pre-warm failed: {e}")
+
+    threading.Thread(
+        target=_warm, name="FeedbackAudioPrewarm", daemon=True
+    ).start()
+
+
+def shutdown_feedback_audio():
+    """Terminate the shared feedback PyAudio interface during app shutdown."""
+    global _feedback_audio_interface
+    with _FEEDBACK_AUDIO_LOCK:
+        interface = _feedback_audio_interface
+        _feedback_audio_interface = None
+    if interface:
+        try:
+            interface.terminate()
+        except Exception as e:
+            logger.debug(f"Error terminating feedback audio interface: {e}")
+
 
 def play_start_feedback():
     """Play a high-pitched beep for recording start."""
@@ -41,25 +94,25 @@ def _play_feedback_sound(sound_path: Path, sound_name: str):
 
 
 def _play_wav_feedback(sound_path: Path, sound_name: str):
-    audio = None
     stream = None
     try:
         from src.audio_recorder import _suppress_native_stderr
 
-        with wave.open(str(sound_path), "rb") as wav_file:
-            with _suppress_native_stderr():
-                audio = pyaudio.PyAudio()
-                stream = audio.open(
-                    format=audio.get_format_from_width(wav_file.getsampwidth()),
-                    channels=wav_file.getnchannels(),
-                    rate=wav_file.getframerate(),
-                    output=True,
-                )
+        with _FEEDBACK_AUDIO_LOCK:
+            with wave.open(str(sound_path), "rb") as wav_file:
+                audio = _get_feedback_audio_interface()
+                with _suppress_native_stderr():
+                    stream = audio.open(
+                        format=audio.get_format_from_width(wav_file.getsampwidth()),
+                        channels=wav_file.getnchannels(),
+                        rate=wav_file.getframerate(),
+                        output=True,
+                    )
 
-            data = wav_file.readframes(1024)
-            while data:
-                stream.write(data)
                 data = wav_file.readframes(1024)
+                while data:
+                    stream.write(data)
+                    data = wav_file.readframes(1024)
     except Exception as e:
         logger.error(f"Failed to play {sound_name} feedback sound: {e}")
     finally:
@@ -70,13 +123,6 @@ def _play_wav_feedback(sound_path: Path, sound_name: str):
             except Exception as cleanup_error:
                 logger.debug(
                     f"Error cleaning up {sound_name} feedback stream: {cleanup_error}"
-                )
-        if audio:
-            try:
-                audio.terminate()
-            except Exception as cleanup_error:
-                logger.debug(
-                    f"Error terminating {sound_name} feedback audio: {cleanup_error}"
                 )
 
 
