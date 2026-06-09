@@ -1,3 +1,4 @@
+import queue
 import os
 import threading
 import wave
@@ -13,14 +14,33 @@ _ASSETS_DIR = Path(__file__).parent / "assets" / "audio"
 _START_SOUND_PATH = _ASSETS_DIR / "start_feedback.wav"
 _STOP_SOUND_PATH = _ASSETS_DIR / "stop_feedback.wav"
 
-# A single PyAudio instance is shared across all feedback beeps. Constructing
-# PyAudio() calls Pa_Initialize(), which enumerates every audio device on the
-# system (often 100ms+ and, on ALSA, contends with the capture stream being
-# opened at record-start). Reusing one instance avoids paying that on every
-# beep. Playback is serialized by the lock so concurrent beeps don't race on
-# the shared interface.
-_FEEDBACK_AUDIO_LOCK = threading.Lock()
+# Feedback beeps share ONE persistent PyAudio interface and are always played
+# serially on a single dedicated worker thread. This design is deliberate and
+# fixes two separate Linux bugs:
+#
+#   1. Crash (segfault): constructing/terminating a PyAudio interface per beep
+#      churns Pa_Initialize/Pa_Terminate, which re-installs alsa-lib's global
+#      error handler (snd_lib_error_set_handler) on each call. The capture
+#      stream lives for the whole session and constantly emits ALSA underrun
+#      errors; once a terminate leaves a dangling error-handler pointer, the
+#      next capture-side ALSA error invokes freed code and the process dies.
+#      Never terminating mid-session (only at shutdown, after capture is gone)
+#      eliminates that churn.
+#   2. Freeze: an earlier shared-interface attempt held a lock across the whole
+#      blocking write loop, so overlapping start/stop beeps serialized on that
+#      lock and stalled. Routing every beep through one consumer thread makes
+#      the producer (the hotkey/worker path) non-blocking — it only enqueues —
+#      while keeping PortAudio access single-threaded.
+#
+# The output stream is still opened and closed per beep so the playback device
+# is released promptly between beeps (some ALSA stacks refuse to keep a playback
+# device open while the capture stream is opened at record-start).
+_FEEDBACK_LOCK = threading.Lock()
 _feedback_audio_interface = None
+_FEEDBACK_QUEUE_MAXSIZE = 8
+_feedback_queue: "queue.Queue" = queue.Queue(maxsize=_FEEDBACK_QUEUE_MAXSIZE)
+_feedback_worker: threading.Thread | None = None
+_feedback_worker_lock = threading.Lock()
 
 
 def _get_feedback_audio_interface():
@@ -34,8 +54,35 @@ def _get_feedback_audio_interface():
     return _feedback_audio_interface
 
 
+def _ensure_feedback_worker() -> None:
+    """Start the single feedback playback consumer thread if it isn't running."""
+    global _feedback_worker
+    with _feedback_worker_lock:
+        if _feedback_worker is not None and _feedback_worker.is_alive():
+            return
+        _feedback_worker = threading.Thread(
+            target=_feedback_worker_loop, name="FeedbackAudio", daemon=True
+        )
+        _feedback_worker.start()
+
+
+def _feedback_worker_loop() -> None:
+    """Play queued feedback beeps one at a time on a single thread."""
+    while True:
+        item = _feedback_queue.get()
+        try:
+            if item is None:
+                break
+            sound_path, sound_name = item
+            _play_wav_feedback(sound_path, sound_name)
+        except Exception as e:  # pragma: no cover - defensive guard
+            logger.debug(f"Feedback audio worker error: {e}")
+        finally:
+            _feedback_queue.task_done()
+
+
 def prewarm_feedback_audio():
-    """Create the shared feedback interface ahead of the first recording.
+    """Create the shared feedback interface and worker ahead of the first beep.
 
     Constructing PyAudio enumerates audio devices; doing it at startup (when no
     capture stream is open) keeps the first beep fast and avoids contending with
@@ -44,8 +91,9 @@ def prewarm_feedback_audio():
 
     def _warm():
         try:
-            with _FEEDBACK_AUDIO_LOCK:
+            with _FEEDBACK_LOCK:
                 _get_feedback_audio_interface()
+            _ensure_feedback_worker()
         except Exception as e:
             logger.debug(f"Feedback audio pre-warm failed: {e}")
 
@@ -55,9 +103,21 @@ def prewarm_feedback_audio():
 
 
 def shutdown_feedback_audio():
-    """Terminate the shared feedback PyAudio interface during app shutdown."""
-    global _feedback_audio_interface
-    with _FEEDBACK_AUDIO_LOCK:
+    """Stop the worker and terminate the shared interface during app shutdown.
+
+    Must be called AFTER the capture stream/interface is torn down so no active
+    ALSA capture is using the global error handler when Pa_Terminate resets it.
+    """
+    global _feedback_worker, _feedback_audio_interface
+
+    with _feedback_worker_lock:
+        worker = _feedback_worker
+        _feedback_worker = None
+    if worker and worker.is_alive():
+        _feedback_queue.put(None)
+        worker.join(timeout=2.0)
+
+    with _FEEDBACK_LOCK:
         interface = _feedback_audio_interface
         _feedback_audio_interface = None
     if interface:
@@ -70,49 +130,54 @@ def shutdown_feedback_audio():
 def play_start_feedback():
     """Play a high-pitched beep for recording start."""
 
-    _play_feedback_sound(_START_SOUND_PATH, "start")
+    _enqueue_feedback_sound(_START_SOUND_PATH, "start")
 
 
 def play_stop_feedback():
     """Play a lower-pitched confirmation beep for recording stop."""
 
-    _play_feedback_sound(_STOP_SOUND_PATH, "stop")
+    _enqueue_feedback_sound(_STOP_SOUND_PATH, "stop")
 
 
-def _play_feedback_sound(sound_path: Path, sound_name: str):
+def _enqueue_feedback_sound(sound_path: Path, sound_name: str):
     if not sound_path.exists():
         logger.warning(f"{sound_name.title()} feedback audio file not found: {sound_path}")
         return
 
-    thread = threading.Thread(
-        target=_play_wav_feedback,
-        args=(sound_path, sound_name),
-        name=f"{sound_name.title()}FeedbackSound",
-        daemon=True,
-    )
-    thread.start()
+    _ensure_feedback_worker()
+    try:
+        _feedback_queue.put_nowait((sound_path, sound_name))
+    except queue.Full:
+        # Under rapid toggling, drop the beep rather than letting playback lag
+        # behind the user's recordings.
+        logger.debug(f"Feedback audio queue full; dropping {sound_name} beep")
 
 
 def _play_wav_feedback(sound_path: Path, sound_name: str):
+    """Play one beep on the shared interface. Runs on the feedback worker thread.
+
+    Opens and closes the output stream per beep but never terminates the shared
+    interface (see the module comment on the Pa_Terminate/ALSA crash).
+    """
     stream = None
     try:
         from src.audio_recorder import _suppress_native_stderr
 
-        with _FEEDBACK_AUDIO_LOCK:
-            with wave.open(str(sound_path), "rb") as wav_file:
+        with wave.open(str(sound_path), "rb") as wav_file:
+            with _FEEDBACK_LOCK:
                 audio = _get_feedback_audio_interface()
-                with _suppress_native_stderr():
-                    stream = audio.open(
-                        format=audio.get_format_from_width(wav_file.getsampwidth()),
-                        channels=wav_file.getnchannels(),
-                        rate=wav_file.getframerate(),
-                        output=True,
-                    )
+            with _suppress_native_stderr():
+                stream = audio.open(
+                    format=audio.get_format_from_width(wav_file.getsampwidth()),
+                    channels=wav_file.getnchannels(),
+                    rate=wav_file.getframerate(),
+                    output=True,
+                )
 
+            data = wav_file.readframes(1024)
+            while data:
+                stream.write(data)
                 data = wav_file.readframes(1024)
-                while data:
-                    stream.write(data)
-                    data = wav_file.readframes(1024)
     except Exception as e:
         logger.error(f"Failed to play {sound_name} feedback sound: {e}")
     finally:

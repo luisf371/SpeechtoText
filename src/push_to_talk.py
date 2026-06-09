@@ -757,7 +757,9 @@ class PushToTalkApp:
         if self.audio_recorder:
             self.audio_recorder.shutdown()
 
-        # Release the shared feedback PyAudio interface
+        # Tear down feedback audio only after capture is gone, so no active ALSA
+        # capture stream is using the global error handler when Pa_Terminate
+        # resets it (see utils feedback-audio module comment).
         shutdown_feedback_audio()
         self._set_recording_mode("idle")
 

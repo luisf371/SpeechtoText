@@ -1,5 +1,6 @@
+import queue
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,37 +16,37 @@ def mock_logger(monkeypatch):
     return logger
 
 
-def test_play_start_feedback_plays_audio(tmp_path, monkeypatch, mock_logger):
-    """The start feedback should play when the audio file exists."""
+def test_play_start_feedback_enqueues_audio(tmp_path, monkeypatch, mock_logger):
+    """Start feedback should enqueue the beep for the single playback worker."""
 
     audio_path = tmp_path / "start.wav"
     audio_path.write_bytes(b"data")
 
-    thread = MagicMock()
+    test_queue: queue.Queue = queue.Queue()
+    ensure = MagicMock()
     monkeypatch.setattr(utils, "_START_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils.threading, "Thread", thread)
+    monkeypatch.setattr(utils, "_feedback_queue", test_queue)
+    monkeypatch.setattr(utils, "_ensure_feedback_worker", ensure)
 
     utils.play_start_feedback()
 
-    thread.assert_called_once()
-    assert thread.call_args.kwargs["target"] == utils._play_wav_feedback
-    assert thread.call_args.kwargs["args"] == (audio_path, "start")
-    thread.return_value.start.assert_called_once()
+    ensure.assert_called_once()
+    assert test_queue.get_nowait() == (audio_path, "start")
     mock_logger.warning.assert_not_called()
 
 
 def test_play_start_feedback_missing_file_warns(monkeypatch, mock_logger):
-    """A missing audio file should emit a warning and not play anything."""
+    """A missing audio file should emit a warning and not enqueue anything."""
 
     missing_path = Path("/does/not/exist/start.wav")
-    thread = MagicMock()
+    ensure = MagicMock()
 
     monkeypatch.setattr(utils, "_START_SOUND_PATH", missing_path)
-    monkeypatch.setattr(utils.threading, "Thread", thread)
+    monkeypatch.setattr(utils, "_ensure_feedback_worker", ensure)
 
     utils.play_start_feedback()
 
-    thread.assert_not_called()
+    ensure.assert_not_called()
     mock_logger.warning.assert_called_once()
 
 
@@ -66,7 +67,8 @@ def test_play_wav_feedback_logs_error_on_failure(tmp_path, monkeypatch, mock_log
 
 
 def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger):
-    """Feedback playback should stream WAV frames through the shared PyAudio."""
+    """Feedback playback streams WAV frames through one shared, persistent
+    PyAudio interface (reused across beeps, never terminated per beep)."""
 
     audio_path = tmp_path / "start.wav"
     audio_path.write_bytes(b"data")
@@ -83,13 +85,14 @@ def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger)
     stream = audio.open.return_value
 
     monkeypatch.setattr(utils.wave, "open", MagicMock(return_value=wav_file))
-    # Reset the cached interface so this test controls construction.
+    # Reset shared state so this test controls construction/teardown.
     monkeypatch.setattr(utils, "_feedback_audio_interface", None)
+    monkeypatch.setattr(utils, "_feedback_worker", None)
     pyaudio_ctor = MagicMock(return_value=audio)
     monkeypatch.setattr(utils.pyaudio, "PyAudio", pyaudio_ctor)
 
     utils._play_wav_feedback(audio_path, "start")
-    # A second playback should reuse the same interface (no re-construction).
+    # A second beep reuses the same interface (no reconstruction).
     wav_file.readframes.side_effect = [b"chunk", b""]
     utils._play_wav_feedback(audio_path, "start")
 
@@ -101,10 +104,10 @@ def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger)
         rate=16000,
         output=True,
     )
-    assert stream.write.call_args_list == [call(b"chunk"), call(b"chunk")]
     assert stream.stop_stream.call_count == 2
     assert stream.close.call_count == 2
-    # The shared interface is not terminated per playback.
+    # Crucially: the shared interface is NOT terminated per beep (that churn is
+    # what segfaulted on ALSA). It is only torn down at shutdown.
     audio.terminate.assert_not_called()
 
     utils.shutdown_feedback_audio()
@@ -112,22 +115,22 @@ def test_play_wav_feedback_streams_wav_audio(tmp_path, monkeypatch, mock_logger)
     mock_logger.error.assert_not_called()
 
 
-def test_play_stop_feedback_plays_audio(tmp_path, monkeypatch, mock_logger):
-    """The stop feedback should play when the audio file exists."""
+def test_play_stop_feedback_enqueues_audio(tmp_path, monkeypatch, mock_logger):
+    """Stop feedback should enqueue the beep for the single playback worker."""
 
     audio_path = tmp_path / "stop.wav"
     audio_path.write_bytes(b"data")
 
-    thread = MagicMock()
+    test_queue: queue.Queue = queue.Queue()
+    ensure = MagicMock()
     monkeypatch.setattr(utils, "_STOP_SOUND_PATH", audio_path)
-    monkeypatch.setattr(utils.threading, "Thread", thread)
+    monkeypatch.setattr(utils, "_feedback_queue", test_queue)
+    monkeypatch.setattr(utils, "_ensure_feedback_worker", ensure)
 
     utils.play_stop_feedback()
 
-    thread.assert_called_once()
-    assert thread.call_args.kwargs["target"] == utils._play_wav_feedback
-    assert thread.call_args.kwargs["args"] == (audio_path, "stop")
-    thread.return_value.start.assert_called_once()
+    ensure.assert_called_once()
+    assert test_queue.get_nowait() == (audio_path, "stop")
     mock_logger.warning.assert_not_called()
 
 
@@ -135,14 +138,14 @@ def test_play_stop_feedback_missing_file_warns(monkeypatch, mock_logger):
     """A missing audio file for stop feedback should emit a warning."""
 
     missing_path = Path("/does/not/exist/stop.wav")
-    thread = MagicMock()
+    ensure = MagicMock()
 
     monkeypatch.setattr(utils, "_STOP_SOUND_PATH", missing_path)
-    monkeypatch.setattr(utils.threading, "Thread", thread)
+    monkeypatch.setattr(utils, "_ensure_feedback_worker", ensure)
 
     utils.play_stop_feedback()
 
-    thread.assert_not_called()
+    ensure.assert_not_called()
     mock_logger.warning.assert_called_once()
 
 

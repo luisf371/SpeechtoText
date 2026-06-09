@@ -19,6 +19,14 @@ _HOTKEY_SUPPRESSION_COUNT = 0
 _HOTKEY_SUPPRESSION_UNTIL = 0.0
 _HOTKEY_SUPPRESSION_TAIL_SECONDS = 0.25
 
+# Keystrokes this app synthesizes while inserting transcribed text (clipboard
+# paste + optional boundary space). Hotkey-event suppression exists only to keep
+# these synthetic keys from being misread as a hotkey; it must NOT swallow the
+# user's real hotkey keys. Otherwise a push-to-talk key *release* that lands
+# inside the suppression window — e.g. during continuous Parakeet streaming
+# insertion — gets dropped and recording stays stuck "on".
+_SYNTHETIC_INSERTION_KEYS = frozenset({"ctrl", "cmd", "v", "space"})
+
 
 @contextmanager
 def suppress_hotkey_events():
@@ -383,11 +391,13 @@ class HotkeyService:
         if not self.is_running:
             return
 
-        if hotkey_events_suppressed():
-            return
-
         key_name = self._key_to_name(key)
         if key_name is None:
+            return
+
+        # Only swallow our own synthetic paste keystrokes during suppression;
+        # real hotkey keys must always be processed (see _SYNTHETIC_INSERTION_KEYS).
+        if key_name in _SYNTHETIC_INSERTION_KEYS and hotkey_events_suppressed():
             return
 
         if self._debug_hotkey_events_enabled():
@@ -429,11 +439,14 @@ class HotkeyService:
         if not self.is_running:
             return
 
-        if hotkey_events_suppressed():
-            return
-
         key_name = self._key_to_name(key)
         if key_name is None:
+            return
+
+        # Only swallow our own synthetic paste keystrokes during suppression. A
+        # real push-to-talk key release must always stop recording, even while
+        # streaming text insertion is holding the suppression window open.
+        if key_name in _SYNTHETIC_INSERTION_KEYS and hotkey_events_suppressed():
             return
 
         if self._debug_hotkey_events_enabled():

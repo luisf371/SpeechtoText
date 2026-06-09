@@ -469,8 +469,30 @@ class TestHotkeyServiceEdgeCases:
         self.service._on_key_press(pynput_keyboard.Key.ctrl)
         assert len(self.service.current_keys) == 0
 
-    def test_on_key_press_ignored_while_hotkeys_suppressed(self):
-        """Synthetic insertion keystrokes should not trigger hotkeys."""
+    def test_synthetic_keys_ignored_while_hotkeys_suppressed(self):
+        """Synthetic paste keystrokes (ctrl/cmd/v/space) must not trigger hotkeys."""
+        start_cb = MagicMock()
+        stop_cb = MagicMock()
+        service = HotkeyService(hotkey="space", toggle_hotkey="=")
+        service.set_callbacks(start_cb, stop_cb)
+        service.is_running = True
+
+        with suppress_hotkey_events():
+            service._on_key_press(DummyKey("space"))
+            service._on_key_release(DummyKey("space"))
+
+        assert service.is_recording is False
+        assert service.current_keys == set()
+        start_cb.assert_not_called()
+        stop_cb.assert_not_called()
+
+    def test_real_hotkey_key_honored_while_hotkeys_suppressed(self):
+        """A real (non-synthetic) hotkey key must keep working during suppression.
+
+        Otherwise a push-to-talk key release that lands inside the suppression
+        window held open by continuous streaming text insertion gets dropped and
+        recording stays stuck on.
+        """
         start_cb = MagicMock()
         stop_cb = MagicMock()
         service = HotkeyService(hotkey="-", toggle_hotkey="=")
@@ -479,12 +501,13 @@ class TestHotkeyServiceEdgeCases:
 
         with suppress_hotkey_events():
             service._on_key_press(DummyKey("minus"))
+            assert service.is_recording is True
             service._on_key_release(DummyKey("minus"))
 
         assert service.is_recording is False
         assert service.current_keys == set()
-        start_cb.assert_not_called()
-        stop_cb.assert_not_called()
+        start_cb.assert_called_once()
+        stop_cb.assert_called_once()
 
     def test_on_key_release_when_not_running(self):
         """_on_key_release should do nothing when service not running."""

@@ -87,12 +87,14 @@ class HotkeySection:
         controls = ctk.CTkFrame(row, fg_color="transparent", corner_radius=0)
         controls.pack(fill="x")
 
-        # Keycap-style entry — compact, centered, mono
+        # Keycap-style entry — compact, centered, mono. Read-only: the value is
+        # only ever set by capturing keys via the Record button, never typed.
         entry = ctk.CTkEntry(
             controls, textvariable=variable,
             font=FONT_MONO, fg_color=C_INPUT,
             border_color=C_BORDER, text_color=C_TEXT,
             height=33, width=170, corner_radius=7, justify="center",
+            state="readonly",
         )
         entry.pack(side="left")
 
@@ -114,21 +116,22 @@ class HotkeySection:
         self._recording_target = target
         if target == "hotkey":
             var, record_btn, other_btn = self.hotkey_var, self._hotkey_record_btn, self._toggle_record_btn
-            entry = self._hotkey_entry
         else:
             var, record_btn, other_btn = self.toggle_hotkey_var, self._toggle_record_btn, self._hotkey_record_btn
-            entry = self._toggle_entry
 
         self._previous_value = var.get()
         self._current_keys.clear()
         self._captured_keys.clear()
 
+        # The button is only a capture trigger: it shows a static "Recording…"
+        # state, while captured keys are written live into the input box.
         if record_btn:
             record_btn.configure(text="Recording…", fg_color=C_ACCENT, text_color="#1a1205")
         if other_btn:
             other_btn.configure(state="disabled")
-        if entry:
-            entry.configure(state="disabled")
+        # Clear the box so the live capture preview starts fresh. The entry stays
+        # read-only; only key capture writes to it.
+        var.set("")
 
         self._start_local_key_capture()
 
@@ -301,13 +304,11 @@ class HotkeySection:
         self._reset_recording_state()
 
     def _on_keys_changed(self, current_keys: str):
-        val = f"Recording: {current_keys}" if current_keys else "Recording…"
+        # Live-preview the captured combination in the input box (not the button).
         if self._recording_target == "hotkey":
-            btn = self._hotkey_record_btn
-        else:
-            btn = self._toggle_record_btn
-        if btn:
-            btn.configure(text=val)
+            self.hotkey_var.set(current_keys)
+        elif self._recording_target == "toggle_hotkey":
+            self.toggle_hotkey_var.set(current_keys)
 
     def _reset_recording_state(self):
         for btn in (self._hotkey_record_btn, self._toggle_record_btn):
@@ -318,7 +319,7 @@ class HotkeySection:
                 )
         for entry in (self._hotkey_entry, self._toggle_entry):
             if entry:
-                entry.configure(state="normal")
+                entry.configure(state="readonly")
         self._stop_local_key_capture()
         self._recording_target = None
         self._previous_value = ""
