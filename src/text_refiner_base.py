@@ -60,20 +60,6 @@ class TextRefinerBase(ABC):
         self.glossary = glossary if glossary else []
         logger.info(f"Glossary updated with {len(self.glossary)} terms")
 
-    def get_glossary(self) -> list[str]:
-        """
-        Get the current custom glossary.
-
-        Returns:
-            List of glossary terms
-        """
-        return self.glossary.copy()
-
-    def clear_glossary(self):
-        """Clear the custom glossary."""
-        self.glossary = []
-        logger.info("Glossary cleared")
-
     def _get_default_developer_prompt(self) -> str:
         """
         Get the default developer prompt based on glossary availability.

@@ -221,11 +221,6 @@ class _NumericSpinbox(ctk.CTkFrame):
         value = min(max(self._parse(), self.minimum), self.maximum)
         self.variable.set(self._format(value))
 
-    def adjust(self, delta: float):
-        value = self._parse() + delta
-        value = min(max(value, self.minimum), self.maximum)
-        self.variable.set(self._format(value))
-
 
 def _subhead(parent, text: str, pill: str | None = None):
     """Uppercase section label + divider line, with an optional amber pill."""

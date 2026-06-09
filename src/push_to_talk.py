@@ -665,15 +665,6 @@ class PushToTalkApp:
         else:
             logger.info("Configuration updated without requiring component changes")
 
-    def get_configuration(self) -> PushToTalkConfig:
-        """Get the current configuration."""
-        return self.config
-
-    def save_configuration(self, filepath: str = "push_to_talk_config.json"):
-        """Save current configuration to file."""
-        self.config.save_to_file(filepath)
-        logger.info(f"Configuration saved to {filepath}")
-
     def start(self, setup_signals=True):
         """Start the PushToTalk application.
 
@@ -1156,11 +1147,6 @@ class PushToTalkApp:
         """Queue a finalized streaming segment for ordered insertion."""
         self.streaming_text_inserter.enqueue(text)
         self._sync_streaming_text_inserter_aliases()
-
-    def _format_streaming_insert_segment(self, text: str) -> str:
-        """Add a stable separator before streamed segments after the first one."""
-        self._apply_streaming_text_inserter_aliases()
-        return self.streaming_text_inserter.format_segment(text)
 
     def _streaming_insert_loop(self):
         """Insert streaming text segments serially to avoid clipboard races."""

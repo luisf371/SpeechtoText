@@ -134,8 +134,3 @@ class FeatureFlagsSection:
             streaming_boundary_space_keypress
         )
         self.debug_mode_var.set(debug_mode)
-
-    def set_text_refinement_available(self, available: bool):
-        if self._refinement_switch:
-            state = "normal" if available else "disabled"
-            self._refinement_switch.configure(state=state)
