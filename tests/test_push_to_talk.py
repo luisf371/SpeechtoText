@@ -413,6 +413,52 @@ def test_parakeet_streaming_finish_waits_for_stop_silence_to_send(monkeypatch):
     assert session._audio_queue.unfinished_tasks == 0
 
 
+def test_parakeet_streaming_finish_returns_fast_when_no_text(monkeypatch):
+    """An empty/near-empty recording must not block for the full drain_timeout."""
+    monkeypatch.setattr(
+        streaming, "PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS", 0.05
+    )
+    session = streaming.ParakeetStreamingSession(
+        "http://localhost:8000",
+        lambda text: None,
+        drain_timeout=3.0,
+    )
+    # No transcription text was ever produced for this utterance.
+    session.inject_silence = lambda: None
+    session.mark_recording_start()
+
+    started_at = time.monotonic()
+    session.finish_recording()
+    elapsed = time.monotonic() - started_at
+
+    # Should leave shortly after the grace period, far below drain_timeout.
+    assert elapsed < 1.0
+
+
+def test_parakeet_streaming_finish_waits_when_text_pending(monkeypatch):
+    """A recording that produced text waits for the trailing final transcript."""
+    monkeypatch.setattr(
+        streaming, "PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS", 0.05
+    )
+    session = streaming.ParakeetStreamingSession(
+        "http://localhost:8000",
+        lambda text: None,
+        drain_timeout=0.6,
+    )
+    session.inject_silence = lambda: None
+    session.mark_recording_start()
+    # Simulate a partial transcript arriving during the recording.
+    session._last_text_time = time.monotonic()
+
+    started_at = time.monotonic()
+    session.finish_recording()
+    elapsed = time.monotonic() - started_at
+
+    # No post-stop final text ever arrives, so it holds until drain_timeout
+    # rather than truncating a possible trailing transcript.
+    assert elapsed >= 0.6
+
+
 def test_start_prewarms_parakeet_streaming_session(
     make_app, dependency_stubs, monkeypatch
 ):

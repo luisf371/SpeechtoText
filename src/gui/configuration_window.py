@@ -722,6 +722,10 @@ class ConfigurationWindow:
 
     def _on_recording_state_changed(self, mode: str):
         recording_mode = self._normalize_recording_mode(mode)
+        # When the app is running but not recording it is "connected but idle",
+        # which the tray shows as green ("ready") rather than gray.
+        if recording_mode == "idle" and self.is_running:
+            recording_mode = "ready"
         self._recording_mode = recording_mode
         if self._tray_indicator:
             self._tray_indicator.update(recording_mode)

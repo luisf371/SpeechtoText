@@ -120,6 +120,7 @@ class ParakeetStreamingSession:
         self._stop_event = threading.Event()
         self._connected_event = threading.Event()
         self._last_text_time = 0.0
+        self._recording_started_at = 0.0
         self._connection = None
         self.error: Exception | None = None
         self._thread: threading.Thread | None = None
@@ -150,6 +151,11 @@ class ParakeetStreamingSession:
         )
         self._thread.start()
 
+    def mark_recording_start(self) -> None:
+        """Mark the start of a new utterance so finish_recording can tell whether
+        this recording produced any transcription text."""
+        self._recording_started_at = time.monotonic()
+
     def send_audio(self, chunk: bytes) -> None:
         """Queue raw PCM bytes for sending. Safe for the audio recording thread."""
         if not chunk or self._stop_event.is_set():
@@ -176,20 +182,43 @@ class ParakeetStreamingSession:
         """Flush the final utterance while keeping the WebSocket connected."""
         with self._finish_lock:
             stop_started_at = time.monotonic()
+            # Did this recording produce any transcription text at all? If the
+            # whole utterance was silent (e.g. a quick toggle that captured
+            # almost no audio), the server will never emit a final transcript,
+            # so there is nothing to drain and we must not block for the full
+            # drain_timeout — doing so backs up the recording worker and makes
+            # the app look stuck "recording" for seconds.
+            recording_had_text = (
+                self._recording_started_at > 0.0
+                and self._last_text_time >= self._recording_started_at
+            )
             self.inject_silence()
             send_deadline = stop_started_at + self.drain_timeout
             self._wait_for_audio_queue_drain(send_deadline)
-            deadline = time.monotonic() + self.drain_timeout
+            queue_drained_at = time.monotonic()
+            deadline = queue_drained_at + self.drain_timeout
 
             while time.monotonic() < deadline and not self._stop_event.is_set():
+                now = time.monotonic()
                 final_text_seen = self._last_text_time >= stop_started_at
-                quiet_after_final_text = (
-                    final_text_seen
-                    and time.monotonic() - self._last_text_time
-                    >= PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS
-                )
-                if self._audio_queue.empty() and quiet_after_final_text:
-                    break
+                if final_text_seen:
+                    # The server emitted final text after stop; leave once it
+                    # goes quiet so we don't truncate a trailing transcript.
+                    if (
+                        self._audio_queue.empty()
+                        and now - self._last_text_time
+                        >= PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS
+                    ):
+                        break
+                elif not recording_had_text:
+                    # Empty/near-empty recording: nothing was ever transcribed,
+                    # so a brief grace after the stop-silence is sent is enough.
+                    if (
+                        self._audio_queue.empty()
+                        and now - queue_drained_at
+                        >= PARAKEET_STREAMING_FINAL_TEXT_QUIET_SECONDS
+                    ):
+                        break
                 time.sleep(0.05)
 
     def _wait_for_audio_queue_drain(self, deadline: float) -> None:

@@ -983,6 +983,9 @@ class PushToTalkApp:
             self._wait_for_streaming_insert_queue()
             self.streaming_frame_buffer.clear()
             self._ensure_streaming_session()
+            mark_start = getattr(self.streaming_session, "mark_recording_start", None)
+            if callable(mark_start):
+                mark_start()
 
             started = self.audio_recorder.start_recording(
                 chunk_callback=self._on_streaming_audio_chunk,
