@@ -13,6 +13,9 @@ from src.config.constants import AUDIO_DURATION_MIN_THRESHOLD_SECONDS
 _ASSETS_DIR = Path(__file__).parent / "assets" / "audio"
 _START_SOUND_PATH = _ASSETS_DIR / "start_feedback.wav"
 _STOP_SOUND_PATH = _ASSETS_DIR / "stop_feedback.wav"
+# Distinct rising chime signaling the transcript is on the clipboard and ready
+# to be pasted manually (Linux clipboard-handoff mode; see platform_support).
+_CLIPBOARD_READY_SOUND_PATH = _ASSETS_DIR / "clipboard_ready.wav"
 
 # Feedback beeps share ONE persistent PyAudio interface and are always played
 # serially on a single dedicated worker thread. This design is deliberate and
@@ -97,9 +100,7 @@ def prewarm_feedback_audio():
         except Exception as e:
             logger.debug(f"Feedback audio pre-warm failed: {e}")
 
-    threading.Thread(
-        target=_warm, name="FeedbackAudioPrewarm", daemon=True
-    ).start()
+    threading.Thread(target=_warm, name="FeedbackAudioPrewarm", daemon=True).start()
 
 
 def shutdown_feedback_audio():
@@ -139,9 +140,17 @@ def play_stop_feedback():
     _enqueue_feedback_sound(_STOP_SOUND_PATH, "stop")
 
 
+def play_clipboard_ready_feedback():
+    """Play a distinct rising chime: transcript is on the clipboard, ready to paste."""
+
+    _enqueue_feedback_sound(_CLIPBOARD_READY_SOUND_PATH, "clipboard-ready")
+
+
 def _enqueue_feedback_sound(sound_path: Path, sound_name: str):
     if not sound_path.exists():
-        logger.warning(f"{sound_name.title()} feedback audio file not found: {sound_path}")
+        logger.warning(
+            f"{sound_name.title()} feedback audio file not found: {sound_path}"
+        )
         return
 
     _ensure_feedback_worker()

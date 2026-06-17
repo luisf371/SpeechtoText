@@ -274,7 +274,7 @@ The application creates a `push_to_talk_config.json` file. Example configuration
 | `custom_endpoint` | string | `""` | Legacy custom API endpoint fallback for older saved configs. Prefer `custom_stt_endpoint` and `custom_refinement_endpoint`. |
 | `custom_stt_endpoint` | string | `""` | Custom STT endpoint URL for OpenAI-compatible transcription APIs. Required when `stt_provider` is `custom`. |
 | `parakeet_endpoint` | string | `"http://localhost:8000"` | Parakeet service base URL or `/transcribe` URL. Required when `stt_provider` is `parakeet`. |
-| `parakeet_streaming_enabled` | boolean | `false` | Use Parakeet WebSocket streaming instead of REST transcription. Requires 16 kHz mono audio. |
+| `parakeet_streaming_enabled` | boolean | `false` | Use Parakeet WebSocket streaming instead of REST transcription. Requires 16 kHz mono audio. **Ignored on Linux**, which always uses the complete (non-streaming) path for clipboard handoff. |
 | `parakeet_streaming_vad_end_silence_ms` | integer | `250` | Parakeet streaming VAD trailing silence threshold in milliseconds. |
 | `parakeet_streaming_max_chunk_seconds` | number | `8.0` | Parakeet streaming maximum VAD chunk duration in seconds. |
 | `parakeet_streaming_batch_size` | integer | `4` | Parakeet streaming transcription micro-batch size. |
@@ -346,9 +346,27 @@ The application includes clean and simple audio feedback:
 
 - **Recording Start**: A high-pitched beep sound that signals recording has begun
 - **Recording Stop**: A lower-pitched confirmation beep that confirms recording completion
+- **Transcript Ready (Linux)**: A distinct rising chime that signals the transcript has been copied to the clipboard and is ready to paste
 - **Non-Blocking**: Audio playback runs asynchronously to avoid interfering with recording or transcription
 - **Configurable**: Can be toggled on/off via GUI or configuration JSON file
 - **Cross-Platform**: Uses `playsound3` for audio playback with pre-recorded WAV files
+
+### Text Insertion on Linux (Clipboard Handoff)
+
+On Windows and macOS the transcribed text is pasted automatically into the active
+window. On Linux — especially Wayland compositors such as KDE Plasma — applications
+cannot reliably synthesize a paste keystroke or type into other windows, so
+PushToTalk uses **clipboard handoff** instead:
+
+1. The complete transcript is copied to the clipboard (using `wl-copy` when
+   available, falling back to `xclip`/`xsel` via `pyperclip`).
+2. The "transcript ready" chime plays.
+3. You paste it yourself with **Ctrl+V**.
+
+Because the text is delivered in one shot via the clipboard, live streaming
+insertion (Parakeet WebSocket) is disabled on Linux and the complete transcription
+path is always used. For the best clipboard experience on Wayland, install
+`wl-clipboard`.
 
 ## Architecture
 

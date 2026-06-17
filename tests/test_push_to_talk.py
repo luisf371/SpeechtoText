@@ -182,6 +182,12 @@ def dependency_stubs(monkeypatch):
     monkeypatch.setattr(push_to_talk, "TextInserter", StubTextInserter)
     monkeypatch.setattr(push_to_talk, "HotkeyService", StubHotkeyService)
 
+    # Default app tests to the auto-paste platform (Windows/macOS) so Parakeet
+    # streaming stays active; the Linux clipboard-handoff gate is covered by its
+    # own tests. The test host is Linux, where handoff would otherwise force the
+    # complete (non-streaming) path and disable the streaming machinery.
+    monkeypatch.setattr("src.platform_support.use_clipboard_handoff", lambda: False)
+
     return tracker
 
 
@@ -343,6 +349,26 @@ def test_parakeet_streaming_uses_native_frame_chunk_size(make_app, dependency_st
 
     recorder = dependency_stubs.last("audio_recorder")
     assert recorder.chunk_size == push_to_talk.PARAKEET_STREAMING_FRAME_SAMPLES
+
+
+def test_is_parakeet_streaming_active_gated_by_clipboard_handoff(monkeypatch):
+    config = push_to_talk.PushToTalkConfig(
+        stt_provider="parakeet",
+        parakeet_streaming_enabled=True,
+        sample_rate=push_to_talk.PARAKEET_STREAMING_SAMPLE_RATE,
+        channels=push_to_talk.PARAKEET_STREAMING_CHANNELS,
+    )
+
+    # Auto-paste platforms keep streaming active (and streaming disables refinement).
+    monkeypatch.setattr("src.platform_support.use_clipboard_handoff", lambda: False)
+    assert config.is_parakeet_streaming_active() is True
+    assert config.is_text_refinement_effective() is False
+
+    # Clipboard-handoff platforms (Linux) force the complete, non-streaming path,
+    # which re-enables refinement for the one-shot transcript.
+    monkeypatch.setattr("src.platform_support.use_clipboard_handoff", lambda: True)
+    assert config.is_parakeet_streaming_active() is False
+    assert config.is_text_refinement_effective() is True
 
 
 def test_parakeet_streaming_options_are_added_to_ws_url():
