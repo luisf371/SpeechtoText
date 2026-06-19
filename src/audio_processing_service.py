@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from src import platform_support
 from src.exceptions import (
     APIError,
     TextInsertionError,
@@ -82,12 +83,26 @@ class AudioProcessingService:
                     )
                     final_text = transcribed_text
 
-            logger.info("Inserting text into active window...")
+            handoff = platform_support.use_clipboard_handoff()
+            logger.info(
+                "Copying text to clipboard for manual paste..."
+                if handoff
+                else "Inserting text into active window..."
+            )
             try:
                 final_text = normalize_sentence_spacing(final_text)
                 success = text_inserter.insert_text(final_text)
                 if success:
-                    logger.info("Text insertion successful")
+                    if handoff:
+                        logger.info(
+                            "Transcript ready on clipboard; press Ctrl+V to paste"
+                        )
+                        if config.enable_audio_feedback:
+                            from src.utils import play_clipboard_ready_feedback
+
+                            play_clipboard_ready_feedback()
+                    else:
+                        logger.info("Text insertion successful")
                 else:
                     logger.error("Text insertion failed")
             except TextInsertionError as e:

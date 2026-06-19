@@ -41,6 +41,7 @@ from src.text_formatting import normalize_sentence_spacing as normalize_sentence
 from src.text_inserter import TextInserter
 from src.streaming_text_inserter import StreamingTextInserter
 from src.hotkey_service import HotkeyService
+from src import platform_support
 from src.provider_registry import (
     REFINEMENT_PROVIDERS,
     STT_PROVIDERS,
@@ -223,7 +224,14 @@ class PushToTalkConfig(BaseModel):
         return self.custom_refinement_endpoint or self.custom_endpoint
 
     def is_parakeet_streaming_active(self) -> bool:
-        """Return True when Parakeet WebSocket streaming should be used."""
+        """Return True when Parakeet WebSocket streaming should be used.
+
+        Clipboard-handoff platforms (Linux) force the complete, non-streaming
+        path: the transcript is pasted manually from the clipboard in one shot,
+        so live streaming insertion does not apply.
+        """
+        if platform_support.use_clipboard_handoff():
+            return False
         return self.stt_provider == "parakeet" and self.parakeet_streaming_enabled
 
     def is_text_refinement_effective(self) -> bool:
@@ -339,7 +347,7 @@ class PushToTalkApp:
                 raise ConfigurationError(
                     "Parakeet STT provider requires a Parakeet endpoint URL."
                 )
-            if self.config.parakeet_streaming_enabled:
+            if self.config.is_parakeet_streaming_active():
                 self._validate_parakeet_streaming_audio_settings()
         elif self.config.stt_provider == "custom":
             if not self.config.get_custom_stt_endpoint():
@@ -913,7 +921,7 @@ class PushToTalkApp:
         self._cancel_rest_auto_stop_timer()
         if (
             self.config.stt_provider != "parakeet"
-            or self.config.parakeet_streaming_enabled
+            or self.config.is_parakeet_streaming_active()
         ):
             return
 

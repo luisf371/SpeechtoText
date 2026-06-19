@@ -38,7 +38,7 @@ def validate_configuration(config: PushToTalkConfig) -> tuple[bool, str | None]:
                 "Parakeet STT provider requires a Parakeet endpoint URL!\n\n"
                 "Enter a base URL such as http://192.168.1.234:8678.",
             )
-        if config.parakeet_streaming_enabled and (
+        if config.is_parakeet_streaming_active() and (
             config.sample_rate != 16000 or config.channels != 1
         ):
             return (

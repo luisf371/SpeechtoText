@@ -4,6 +4,7 @@ import tkinter as tk
 from typing import Callable
 import customtkinter as ctk
 
+from src import platform_support
 from src.transcription_parakeet_streaming import (
     PARAKEET_STREAMING_DEFAULT_BATCH_SIZE,
     PARAKEET_STREAMING_DEFAULT_BATCH_WINDOW_MS,
@@ -473,7 +474,7 @@ class APISection:
             fg_color="transparent",
             anchor="w",
         ).pack(side="left")
-        ctk.CTkSwitch(
+        streaming_switch = ctk.CTkSwitch(
             sc_header,
             variable=self.parakeet_streaming_enabled_var,
             text="",
@@ -486,10 +487,21 @@ class APISection:
             button_hover_color=C_TEXT,
             switch_width=38,
             switch_height=20,
-        ).pack(side="right")
+        )
+        streaming_switch.pack(side="right")
+        streaming_help = "Stream audio live for lower latency"
+        if platform_support.use_clipboard_handoff():
+            # On Linux the transcript is pasted manually from the clipboard, so
+            # live streaming insertion does not apply; keep the control inert.
+            self.parakeet_streaming_enabled_var.set(False)
+            streaming_switch.configure(state="disabled")
+            streaming_help = (
+                "Unavailable on Linux — transcript is copied to the clipboard "
+                "for manual paste"
+            )
         ctk.CTkLabel(
             sc_inner,
-            text="Stream audio live for lower latency",
+            text=streaming_help,
             font=("Segoe UI", 11),
             text_color=C_TEXT3,
             fg_color="transparent",
@@ -878,7 +890,13 @@ class APISection:
             "custom_stt_endpoint": self.custom_stt_endpoint_var.get().strip(),
             "custom_refinement_endpoint": self.custom_refinement_endpoint_var.get().strip(),
             "parakeet_endpoint": self.parakeet_endpoint_var.get().strip(),
-            "parakeet_streaming_enabled": self.parakeet_streaming_enabled_var.get(),
+            # Linux always uses clipboard handoff (complete transcription); never
+            # persist streaming as enabled there even if a cross-OS config set it.
+            "parakeet_streaming_enabled": (
+                False
+                if platform_support.use_clipboard_handoff()
+                else self.parakeet_streaming_enabled_var.get()
+            ),
             "parakeet_streaming_vad_end_silence_ms": self.parakeet_streaming_vad_end_silence_ms_var.get().strip(),
             "parakeet_streaming_max_chunk_seconds": self.parakeet_streaming_max_chunk_seconds_var.get().strip(),
             "parakeet_streaming_batch_size": self.parakeet_streaming_batch_size_var.get().strip(),
